@@ -128,20 +128,20 @@ def calculate_dominant_pole(gm1, A2, CC):
     return -gm1 / (A2 * CC)
 
 
-def calculate_non_dominant_pole(gm2, CL):
+def calculate_non_dominant_pole(Rout, CL_eff):
     """
     Calculate non-dominant pole at output node.
     
-    p2 = -gm2 / CL
+    p2 = -1 / (Rout * CL_eff)
     
     Args:
-        gm2: Stage 2 transconductance (S)
-        CL: Load capacitance (F)
+        Rout: Output resistance of stage 2 (Ohm)
+        CL_eff: Effective load capacitance at output (F)
     
     Returns:
         Non-dominant pole (rad/s, negative)
     """
-    return -gm2 / CL
+    return -1 / (Rout * CL_eff)
 
 
 def calculate_closed_loop_bandwidth(f_u, G_closed_loop):

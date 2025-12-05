@@ -6,8 +6,8 @@ import prelim_design_params as params
 # Load MOS data
 try:
     nch_2v = importdata("nch_2v.mat")  # 2V NMOS for inputs (M1/M2)
-    nch    = importdata("nch_1v.mat")  # 1V NMOS for cascodes/tail (M3/M4/M9)
-    pch    = importdata("pch_1v.mat")  # 1V PMOS for loads/cascodes (M5–M8)
+    nch = importdata("nch_1v.mat")  # 1V NMOS for cascodes/tail (M3/M4/M9)
+    pch = importdata("pch_1v.mat")  # 1V PMOS for loads/cascodes (M5–M8)
     print("MOS data loaded successfully for telescopic design.")
 except Exception as e:
     print("Error loading MOS data:", e)
@@ -31,10 +31,6 @@ def design_telescopic(
     Telescopic stage-1 designer with PMOS active load, constrained to a
     specific single-ended output common-mode (Vout_target).
 
-    Vout_target:
-        Desired single-ended output common-mode voltage at the telescopic
-        output node. This is what will feed Stage 2 (NMOS gate there).
-
     mode:
       - "high_swing": high-swing PMOS load:
             top PMOS gate ≈ Vout (other side),
@@ -44,50 +40,52 @@ def design_telescopic(
             → gate = drain (they bias themselves, no external VBP1/VBP0).
     """
 
-    high_swing  = (mode == "high_swing")
-    diode_load  = (mode == "standard")
+    high_swing = (mode == "high_swing")
+    diode_load = (mode == "standard")
 
     # ====== SYSTEM-LEVEL SPECS ======
-    fu   = params.f_u_required
-    ft   = fu * ft_fu_ratio
+    fu = params.f_u_required
+    ft = fu * ft_fu_ratio
     Cint = params.CC
 
-    VDD_spec = params.VDDL_MAX  # Use VDDL from config (e.g. 1.1 V)
-    VDD_eff  = VDD_spec - VDD_margin
+    VDD_spec = params.VDDL_MAX  # e.g. 1.1 V
+    VDD_eff = VDD_spec - VDD_margin
 
-    # Headroom model / constraints (desired VDS/VSD allocations)
-    tail_headroom    = 0.15   # VDS for tail device (M9)
-    casc_headroom_n  = 0.15   # VDS for NMOS cascode (M3/M4)
-    headroom_p_bot   = 0.15   # VSD for bottom PMOS (P_bot)
+    # Headroom model / constraints
+    tail_headroom = 0.15   # VDS for tail device (M9)
+    casc_headroom_n = 0.15   # VDS for NMOS cascode (M3/M4)
+    # NOTE: we NO LONGER treat headroom_p_bot as literal VSD.
+    # It can be interpreted as an *extra* "comfort margin" if you want.
+    headroom_p_bot = 0.00   # extra slack beyond Vov; keep 0 or small
 
     # gm/ID search grids
-    gm_ID_bot_p_grid   = np.arange(6, 22, 1)   # bottom PMOS gm/ID candidates
-    gm_ID_casc_n_grid  = np.arange(8, 22, 1)   # NMOS cascode gm/ID candidates
+    gm_ID_bot_p_grid = np.arange(6, 22, 1)   # bottom PMOS gm/ID candidates
+    gm_ID_casc_n_grid = np.arange(8, 22, 1)   # NMOS cascode gm/ID candidates
 
     # Lengths
     L_casc_n = nch['L'][0]        # NMOS cascode (shortest 1V NMOS)
 
     # Sweep ranges — now Vout is fixed to Vout_target
-    Vout_range       = np.array([Vout_target])
-    L_in_range       = nch_2v['L']               # input NMOS L (2V device)
-    L_p_range        = pch['L']                  # PMOS L
-    gm_ID_range_in   = np.arange(5, 30, 1)       # gm/ID sweep for input NMOS
+    Vout_range = np.array([Vout_target])
+    L_in_range = nch_2v['L']               # input NMOS L (2V device)
+    L_p_range = pch['L']                  # PMOS L
+    gm_ID_range_in = np.arange(5, 30, 1)       # gm/ID sweep for input NMOS
     gm_ID_top_p_grid = np.arange(5, 30, 1)       # gm/ID grid for top PMOS
 
     # Storage
-    best_p_l          = np.zeros(len(Vout_range))
-    best_Av_norm      = np.zeros((len(Vout_range), len(L_in_range)))
-    best_n_gm_id      = np.zeros((len(Vout_range), len(L_in_range)))
-    p_top_gm_id_opt   = np.zeros(len(Vout_range))
-    p_bot_gm_id_opt   = np.zeros(len(Vout_range))
-    gm_ID_casc_n_opt  = np.zeros((len(Vout_range), len(L_in_range)))
+    best_p_l = np.zeros(len(Vout_range))
+    best_Av_norm = np.zeros((len(Vout_range), len(L_in_range)))
+    best_n_gm_id = np.zeros((len(Vout_range), len(L_in_range)))
+    p_top_gm_id_opt = np.zeros(len(Vout_range))
+    p_bot_gm_id_opt = np.zeros(len(Vout_range))
+    gm_ID_casc_n_opt = np.zeros((len(Vout_range), len(L_in_range)))
 
-    best_Av_norm[:]       = np.nan
-    best_n_gm_id[:]       = np.nan
-    best_p_l[:]           = np.nan
-    p_top_gm_id_opt[:]    = np.nan
-    p_bot_gm_id_opt[:]    = np.nan
-    gm_ID_casc_n_opt[:]   = np.nan
+    best_Av_norm[:] = np.nan
+    best_n_gm_id[:] = np.nan
+    best_p_l[:] = np.nan
+    p_top_gm_id_opt[:] = np.nan
+    p_bot_gm_id_opt[:] = np.nan
+    gm_ID_casc_n_opt[:] = np.nan
 
     # =====================================================================
     #   SWEEP (single) Vout_target: SIZE PMOS STACK FOR BEST Rout
@@ -95,28 +93,31 @@ def design_telescopic(
     for i, vout in enumerate(Vout_range):
         # PMOS stack nodes (top → bottom):
         # VDD → P_top → VZ → P_bot → Vout
-        VZ = vout + headroom_p_bot
-        if VZ >= VDD_eff:
-            continue  # cannot place bottom PMOS headroom at this Vout_target
-
-        VSD_bot_p = headroom_p_bot
-        VSD_top_p = VDD_eff - VZ
 
         if high_swing:
             # High-swing: top PMOS gate near Vout, so VSG_top must match.
             VSG_top_req = VDD_eff - vout
 
-        p_gds_id_best         = None
-        best_Lp_idx           = None
-        best_gmID_top_p_here  = None
-        best_gmID_bot_p_here  = None
+        p_gds_id_best = None
+        best_Lp_idx = None
+        best_gmID_top_p_here = None
+        best_gmID_bot_p_here = None
 
         # ----- PMOS stack sizing for this Vout (here just Vout_target) -----
         for gm_ID_bot_p in gm_ID_bot_p_grid:
-            # Approx Vov check for bottom PMOS vs allocated headroom
+
+            # *** KEY CHANGE: compute VSD_bot_p from Vov(gm/ID), not fixed ***
             vov_bot_est = vov_from_gm_id(gm_ID_bot_p)
-            if VSD_bot_p < vov_bot_est + sat_margin_p:
+            # VSD ≈ Vov + margin (+ optional headroom_p_bot slack)
+            VSD_bot_p = vov_bot_est + sat_margin_p + headroom_p_bot
+
+            # Node VZ is now Vout + that VSD_bot_p
+            VZ = vout + VSD_bot_p
+            if VZ >= VDD_eff:
+                # This gm/ID would force too large VSD and violate supply
                 continue
+
+            VSD_top_p = VDD_eff - VZ   # actual VSD at top PMOS
 
             for idx_lp, Lp in enumerate(L_p_range):
                 # Bottom PMOS (P_bot)
@@ -129,13 +130,13 @@ def design_telescopic(
 
                 # Choose top PMOS gm/ID
                 gm_ID_top_p_eff = None
-                p_top_Av        = None
-                p_top_ft        = None
+                p_top_Av = None
+                p_top_ft = None
 
                 if high_swing:
                     # High-swing: top PMOS gate near Vout, so VSG_top must match.
                     best_gmID_top = None
-                    best_vsg_err  = None
+                    best_vsg_err = None
 
                     for gmID_t in gm_ID_top_p_grid:
                         vov_top_est = vov_from_gm_id(gmID_t)
@@ -163,10 +164,10 @@ def design_telescopic(
                     ) / (2 * np.pi)
 
                 elif diode_load:
-                    # STANDARD SIMPLE LOAD: top PMOS is also self-biased (diode-connected).
-                    best_Av_top   = None
+                    # STANDARD SIMPLE LOAD: top PMOS is also self-biased
+                    best_Av_top = None
                     best_gmID_top = None
-                    best_ft_top   = None
+                    best_ft_top = None
 
                     for gmID_t in gm_ID_top_p_grid:
                         vov_top_est = vov_from_gm_id(gmID_t)
@@ -184,16 +185,16 @@ def design_telescopic(
                             continue
 
                         if (best_Av_top is None) or (Av_top_candidate > best_Av_top):
-                            best_Av_top   = Av_top_candidate
+                            best_Av_top = Av_top_candidate
                             best_gmID_top = gmID_t
-                            best_ft_top   = ft_top_candidate
+                            best_ft_top = ft_top_candidate
 
                     if best_gmID_top is None:
                         continue
 
                     gm_ID_top_p_eff = best_gmID_top
-                    p_top_Av        = best_Av_top
-                    p_top_ft        = best_ft_top
+                    p_top_Av = best_Av_top
+                    p_top_ft = best_ft_top
 
                 else:
                     raise ValueError(f"Unknown mode '{mode}'")
@@ -206,28 +207,28 @@ def design_telescopic(
                 p_bot_gds_id_eff = p_bot_gds_id / (1.0 + p_top_Av)
 
                 if p_gds_id_best is None or p_bot_gds_id_eff < p_gds_id_best:
-                    p_gds_id_best        = p_bot_gds_id_eff
-                    best_Lp_idx          = idx_lp
+                    p_gds_id_best = p_bot_gds_id_eff
+                    best_Lp_idx = idx_lp
                     best_gmID_top_p_here = gm_ID_top_p_eff
                     best_gmID_bot_p_here = gm_ID_bot_p
 
         if p_gds_id_best is None:
-            best_p_l[i]        = np.nan
+            best_p_l[i] = np.nan
             best_n_gm_id[i, :] = np.nan
             best_Av_norm[i, :] = np.nan
             continue
 
-        p_gds_id            = p_gds_id_best
-        best_p_l[i]         = L_p_range[best_Lp_idx]
-        p_top_gm_id_opt[i]  = best_gmID_top_p_here
-        p_bot_gm_id_opt[i]  = best_gmID_bot_p_here
+        p_gds_id = p_gds_id_best
+        best_p_l[i] = L_p_range[best_Lp_idx]
+        p_top_gm_id_opt[i] = best_gmID_top_p_here
+        p_bot_gm_id_opt[i] = best_gmID_bot_p_here
 
         # =================================================================
         #   NMOS telescopic side for this fixed Vout
         # =================================================================
         for j, L_in in enumerate(L_in_range):
-            Vx      = vout - casc_headroom_n
-            VDS_in  = Vx - tail_headroom
+            Vx = vout - casc_headroom_n
+            VDS_in = Vx - tail_headroom
             if VDS_in <= 0:
                 best_n_gm_id[i, j] = np.nan
                 best_Av_norm[i, j] = np.nan
@@ -242,9 +243,9 @@ def design_telescopic(
                 nch_2v, 'GM_CGG', gm_ID_range_in, vds=VDS_in, l=L_in
             ) / (2 * np.pi)
 
-            best_Av_here             = 0.0
-            best_gm_id_in_here       = np.nan
-            best_gm_ID_casc_n_here   = np.nan
+            best_Av_here = 0.0
+            best_gm_id_in_here = np.nan
+            best_gm_ID_casc_n_here = np.nan
 
             for gm_ID_casc_n in gm_ID_casc_n_grid:
                 vov_casc_est = vov_from_gm_id(gm_ID_casc_n)
@@ -262,9 +263,9 @@ def design_telescopic(
                 if Vbias_N_casc > VDD_eff:
                     continue
 
-                K_ft  = (n_ft_in > ft)
+                K_ft = (n_ft_in > ft)
                 K_sat = (VDS_in >= (vov_in_range_est + sat_margin_n))
-                K     = K_ft & K_sat
+                K = K_ft & K_sat
 
                 if not np.any(K):
                     continue
@@ -276,21 +277,21 @@ def design_telescopic(
                 Av_candidates = np.where(K, Av_candidates, 0.0)
 
                 idx_local = np.argmax(Av_candidates)
-                Av_local  = Av_candidates[idx_local]
+                Av_local = Av_candidates[idx_local]
 
                 if Av_local > best_Av_here:
-                    best_Av_here           = Av_local
-                    best_gm_id_in_here     = gm_ID_range_in[idx_local]
+                    best_Av_here = Av_local
+                    best_gm_id_in_here = gm_ID_range_in[idx_local]
                     best_gm_ID_casc_n_here = gm_ID_casc_n
 
             if best_Av_here == 0.0 or np.isnan(best_gm_id_in_here):
-                best_n_gm_id[i, j]      = np.nan
-                best_Av_norm[i, j]      = np.nan
-                gm_ID_casc_n_opt[i, j]  = np.nan
+                best_n_gm_id[i, j] = np.nan
+                best_Av_norm[i, j] = np.nan
+                gm_ID_casc_n_opt[i, j] = np.nan
             else:
-                best_n_gm_id[i, j]      = best_gm_id_in_here
-                best_Av_norm[i, j]      = best_Av_here
-                gm_ID_casc_n_opt[i, j]  = best_gm_ID_casc_n_here
+                best_n_gm_id[i, j] = best_gm_id_in_here
+                best_Av_norm[i, j] = best_Av_here
+                gm_ID_casc_n_opt[i, j] = best_gm_ID_casc_n_here
 
     # =====================================================================
     #   PICK GLOBAL OPTIMUM (over L_in) FOR THIS Vout_target
@@ -304,24 +305,26 @@ def design_telescopic(
         best_Av_norm.shape
     )
 
-    opt_Av_norm        = best_Av_norm[vout_idx, n_l_idx]
-    opt_n_gm_id        = best_n_gm_id[vout_idx, n_l_idx]
-    opt_p_l            = best_p_l[vout_idx]
-    opt_n_l            = L_in_range[n_l_idx]
-    opt_vout           = Vout_range[vout_idx]
-    opt_gm_ID_top_p    = p_top_gm_id_opt[vout_idx]
-    opt_gm_ID_bot_p    = p_bot_gm_id_opt[vout_idx]
-    opt_gm_ID_casc_n   = gm_ID_casc_n_opt[vout_idx, n_l_idx]
+    opt_Av_norm = best_Av_norm[vout_idx, n_l_idx]
+    opt_n_gm_id = best_n_gm_id[vout_idx, n_l_idx]
+    opt_p_l = best_p_l[vout_idx]
+    opt_n_l = L_in_range[n_l_idx]
+    opt_vout = Vout_range[vout_idx]
+    opt_gm_ID_top_p = p_top_gm_id_opt[vout_idx]
+    opt_gm_ID_bot_p = p_bot_gm_id_opt[vout_idx]
+    opt_gm_ID_casc_n = gm_ID_casc_n_opt[vout_idx, n_l_idx]
 
     # =====================================================================
-    #   NODE VOLTAGES AT OPTIMUM
+    #   NODE VOLTAGES AT OPTIMUM (RECOMPUTE VSD_bot, VZ, VSD_top)
     # =====================================================================
-    Vx_opt     = opt_vout - casc_headroom_n
-    VDS_in_o   = Vx_opt - tail_headroom
-
-    VZ_opt     = opt_vout + headroom_p_bot
-    VSD_bot_po = headroom_p_bot
+    # Bottom PMOS VSD is tied to gm/ID:
+    vov_p_bot_est = vov_from_gm_id(opt_gm_ID_bot_p)
+    VSD_bot_po = vov_p_bot_est + sat_margin_p + headroom_p_bot
+    VZ_opt = opt_vout + VSD_bot_po
     VSD_top_po = VDD_eff - VZ_opt
+
+    Vx_opt = opt_vout - casc_headroom_n
+    VDS_in_o = Vx_opt - tail_headroom
 
     # NMOS cascode bias VBN
     vgs_casc_n = look_up_vgs_vs_gm_id(
@@ -361,18 +364,17 @@ def design_telescopic(
     wp_top = Id / p_top_jd
 
     # Tail device sizing
-    tail_Id      = 2 * Id
-    tail_L       = 1.0
-    tail_vds     = tail_headroom
+    tail_Id = 2 * Id
+    tail_L = 1.0
+    tail_vds = tail_headroom
 
-    # Choose tail gm/Id FROM the headroom allocation
     vov_tail_target = max(tail_headroom - sat_margin_n, 0.05)
-    tail_gm_id      = 2.0 / vov_tail_target
+    tail_gm_id = 2.0 / vov_tail_target
 
     tail_Id_w = look_up_vs_gm_id(
         nch, 'ID_W', tail_gm_id, vds=tail_vds, l=tail_L
     )
-    W_tail    = tail_Id / tail_Id_w
+    W_tail = tail_Id / tail_Id_w
 
     vov_tail_est = vov_from_gm_id(tail_gm_id)
 
@@ -391,7 +393,7 @@ def design_telescopic(
     vgs_in = look_up_vgs_vs_gm_id(
         nch_2v, opt_n_gm_id, vds=VDS_in_o, l=opt_n_l
     )
-    Vcm_in = tail_headroom + vgs_in   # this is the CM at the inputs M1/M2 gates
+    Vcm_in = tail_headroom + vgs_in   # CM at M1/M2 gates
 
     # Bottom PMOS bias / gate node
     if high_swing:
@@ -429,7 +431,7 @@ def design_telescopic(
     )
     gm_casc_n = opt_gm_ID_casc_n * Id
     ro_casc_n = Av_casc_n / gm_casc_n
-    boost_n   = 1.0 + gm_casc_n * ro_casc_n
+    boost_n = 1.0 + gm_casc_n * ro_casc_n
     Rout_down = ro_in * boost_n
 
     Av_p_bot = look_up_vs_gm_id(
@@ -443,12 +445,12 @@ def design_telescopic(
     )
     gm_p_top = opt_gm_ID_top_p * Id
     ro_p_top = Av_p_top / gm_p_top
-    boost_p  = 1.0 + gm_p_top * ro_p_top
-    Rout_up  = ro_p_bot * boost_p
+    boost_p = 1.0 + gm_p_top * ro_p_top
+    Rout_up = ro_p_bot * boost_p
 
     Rout_total = 1.0 / (1.0 / Rout_down + 1.0 / Rout_up)
-    gm_eff     = gm_M1
-    A1_gain    = gm_eff * Rout_total
+    gm_eff = gm_M1
+    A1_gain = gm_eff * Rout_total
 
     # =====================================================================
     #   CALCULATE ACTUAL UNITY GAIN FREQUENCY
@@ -458,11 +460,11 @@ def design_telescopic(
     # =====================================================================
     #   HEADROOM / SATURATION SANITY CHECKS (approx, based on gm/ID)
     # =====================================================================
-    vov_in_est      = vov_from_gm_id(opt_n_gm_id)
-    vov_casc_est    = vov_from_gm_id(opt_gm_ID_casc_n)
-    vov_p_bot_est   = vov_from_gm_id(opt_gm_ID_bot_p)
-    vov_p_top_est   = vov_from_gm_id(opt_gm_ID_top_p)
-    vov_tail_est    = vov_from_gm_id(tail_gm_id)
+    vov_in_est = vov_from_gm_id(opt_n_gm_id)
+    vov_casc_est = vov_from_gm_id(opt_gm_ID_casc_n)
+    # vov_p_bot_est already computed above
+    vov_p_top_est = vov_from_gm_id(opt_gm_ID_top_p)
+    # vov_tail_est already computed above
 
     violations = []
 
@@ -524,7 +526,7 @@ def design_telescopic(
         "Rout_total":     Rout_total,
         "fu_actual":      fu_actual,
         "ft":             ft,
-        "Vout":           opt_vout,      # == Vout_target if design succeeded
+        "Vout":           opt_vout,
         "VZ":             VZ_opt,
         "Vcm_in":         Vcm_in,
         "Vbias_N_casc":   Vbias_N_casc,
@@ -555,7 +557,6 @@ def design_telescopic(
 
 
 if __name__ == "__main__":
-    # Example usage: plug in whatever Stage 2 wants at its NMOS gate.
-    Vout_target_example = 0.543
+    Vout_target_example = 0.503
     res_hs  = design_telescopic(Vout_target_example, mode="high_swing")
     res_std = design_telescopic(Vout_target_example, mode="standard")

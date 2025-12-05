@@ -42,7 +42,7 @@ T_PIXEL = 180e-9        # seconds - Time to settle each pixel (180 ns)
 # They are estimates/budgets that guide the design, but actual values come from
 # the optimized designs.
 
-ERROR_SPLIT_STATIC_RATIO = 0.5  # Fraction of non-RC error allocated to static error
+ERROR_SPLIT_STATIC_RATIO = 0.3  # Fraction of non-RC error allocated to static error
                                  # (rest goes to dynamic error)
 
 # --- Miller Compensation Capacitor ---
@@ -54,10 +54,10 @@ ERROR_SPLIT_STATIC_RATIO = 0.5  # Fraction of non-RC error allocated to static e
 CC = 0.8e-12  # Farads - Miller compensation capacitor (0.8 pF)
 
 # Estimates of parasitic capacitances and gains (used for preliminary calculations)
-C_OUT_P = 2e-12         # Farads - Estimated output parasitic capacitance
+C_OUT_P = 1e-12         # Farads - Estimated output parasitic capacitance
 FIRST_STAGE_GAIN = 200  # V/V - Estimated Stage 1 gain (actual from telescopic design may differ)
 SECOND_STAGE_GAIN = 37  # V/V - Estimated Stage 2 gain (actual from output stage design may differ)
-P2_FACTOR = 2           # Factor for non-dominant pole placement (p2 = P2_FACTOR * f_u)
+P2_FACTOR = 2.5           # Factor for non-dominant pole placement (p2 = P2_FACTOR * f_u)
 
 # ==============================================================================
 # 4. DESIGN SCRIPT SETTINGS
@@ -77,6 +77,10 @@ TELESCOPIC_MODE = "standard"
 #   - "none": No nulling resistor (Rz = 0)
 RZ_SETTING = "infinity"
 
+# Common-Mode Correction Factor
+# This factor accounts for mismatch between design scripts and simulation.
+# The telescopic stage output CM target is set to: (Stage 2 required input CM) - INT_CM_CORRECTION
+INT_CM_CORRECTION = 0.04  # V - Correction factor for inter-stage common-mode matching
 
 # ==============================================================================
 # 5. PLOTTING OPTIONS

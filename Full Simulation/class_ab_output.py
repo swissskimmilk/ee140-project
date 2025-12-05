@@ -53,8 +53,8 @@ def design_output_stage():
     k_AB = 20.0                   # Class-AB ratio: I_pk_available ≈ k_AB * Iq
 
     # gm/Id and L sweeps for both devices
-    gm_id_n_range = np.linspace(6, 16, 6)  # NMOS gm/Id candidates [1/V]
-    gm_id_p_range = np.linspace(6, 16, 6)  # PMOS gm/Id candidates [1/V]
+    gm_id_n_range = np.linspace(10, 20, 6)  # NMOS gm/Id candidates [1/V]
+    gm_id_p_range = np.linspace(10, 26, 6)  # PMOS gm/Id candidates [1/V]
     L_n_candidates = [0.15, 0.18, 0.2, 0.3, 0.5]  # um
     L_p_candidates = [0.15, 0.18, 0.2, 0.3, 0.5]
 
@@ -74,7 +74,7 @@ def design_output_stage():
     print()
 
     # Peak current needed through RL to support ΔV step
-    I_pk_min = deltaV / RL                      # bare minimum (A)
+    I_pk_min = deltaV / RL                      # bare minimum, worst case, to keep up with ideal amplifier 
     I_pk_target = alpha_Ipk * I_pk_min          # margin (A)
     print(f"Minimum peak current I_pk_min = {I_pk_min*1e3:.3f} mA")
     print(f"Target I_pk (with margin)      = {I_pk_target*1e3:.3f} mA (α={alpha_Ipk:.1f})")
@@ -115,10 +115,16 @@ def design_output_stage():
                             if denom <= 0:
                                 continue
 
-                            Iq = gm2_target / denom        # A (branch current)
+                            # --- Currents required by gm and by slew ---
+                            Iq_min_gm   = gm2_target / denom           # for gm_total >= gm2_target
+                            Iq_min_slew = I_pk_target / k_AB           # for I_pk_available >= I_pk_target
+
+                            # Choose the larger: satisfy BOTH constraints
+                            Iq = max(Iq_min_gm, Iq_min_slew)
+
                             gm_n = gm_id_n * Iq            # S
                             gm_p = gm_id_p * Iq            # S
-                            gm_total = gm_n + gm_p         # ≈ gm2_target
+                            gm_total = gm_n + gm_p         # S
 
                             # Current density J_D = ID/W from LUT, at VDS ≈ Vout_CM
                             JD_n = look_up_vs_gm_id(
@@ -134,6 +140,37 @@ def design_output_stage():
                             # Widths (same Iq flows in N and P at DC)
                             Wn = Iq / JD_n  # um
                             Wp = Iq / JD_p  # um
+
+                            # -------------------------------------------------
+                            # Rough parasitic output capacitance at Vout
+                            #   - Use CDD_W (drain-side cap per unit width)
+                            #   - Only count the caps that sit directly on Vout
+                            # -------------------------------------------------
+                            CDDn_W = float(
+                                look_up_vs_gm_id(
+                                    nch_2v,
+                                    "CDD_W",
+                                    gm_id_n,
+                                    vds=Vout_CM,
+                                    l=L_n,
+                                )
+                            )
+                            CDDp_W = float(
+                                look_up_vs_gm_id(
+                                    pch_2v,
+                                    "CDD_W",
+                                    gm_id_p,
+                                    vds=(VDDH - Vout_CM),
+                                    l=L_p,
+                                )
+                            )
+
+                            # Cap contribution from each device (F)
+                            C_par_n = Wn * CDDn_W
+                            C_par_p = Wp * CDDp_W
+
+                            # Total MOS-only parasitic cap hanging on Vout
+                            C_out_parasitic = C_par_n + C_par_p
 
                             # Intrinsic gain: gm/gds → gds = gm / (gm/gds)
                             gm_gds_n = look_up_vs_gm_id(
@@ -243,6 +280,8 @@ def design_output_stage():
                                     Vgate_n=Vgate_n,
                                     Vgate_p=Vgate_p,
                                     Vbias_g_p_minus_g_n=Vbias_g_p_minus_g_n,
+
+                                    C_out_parasitic=C_out_parasitic
                                 )
                             )
 
@@ -294,6 +333,8 @@ def design_output_stage():
         "Vgate_n [V]",
         "Vgate_p [V]",
         "Vbias_pg_minus_ng [V]",
+
+        "C_out_parasitic [pF]",
     ]
 
     with open(csv_filename, "w", newline="") as f:
@@ -332,6 +373,8 @@ def design_output_stage():
                 "Vgate_n [V]": d["Vgate_n"],
                 "Vgate_p [V]": d["Vgate_p"],
                 "Vbias_pg_minus_ng [V]": d["Vbias_g_p_minus_g_n"],
+
+                "C_out_parasitic [pF]": d["C_out_parasitic"] * 1e12
             })
 
     print(f"\n[OK] Exported {len(designs)} designs to '{csv_filename}'")
@@ -362,6 +405,7 @@ def design_output_stage():
     print(f"rout        = {best['rout']/1e3:.2f} kΩ")
     print(f"I_pk_av     ≈ {best['I_pk_available']*1e3:.2f} mA "
           f"(target ≥ {I_pk_target*1e3:.2f} mA)")
+    print(f"C_out_p     = {best['C_out_parasitic']*1e12:.2f} pF")
     P_mW = best['VDDH'] * best['Iq_total'] * 1e3
     print()
     print(f"VGS_n       = {best['VGS_n']:.3f} V")

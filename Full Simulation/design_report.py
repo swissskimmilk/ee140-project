@@ -10,7 +10,7 @@ This script provides a complete evaluation of the amplifier design:
 3. Stability Analysis (Bode Plots & Phase Margin)
 4. Settling Time Analysis
 5. Power Dissipation & Figure of Merit
-6. Specification Compliance Check
+6. Specification Check
 
 Pipeline:
 1. Start with prelim_design_params.py to calculate required parameters
@@ -117,6 +117,25 @@ print(f"  Stage 2 Gain (A2): {stage2_design['A2']:.2f} V/V")
 print(f"  Peak Drive Current: {stage2_design['I_pk_available']*1e3:.2f} mA")
 print(f"  Required Input CM (Vgate_n): {stage2_design['Vgate_n']:.3f} V")
 
+# Check calculated parasitic capacitance against config estimate
+if 'C_out_parasitic' in stage2_design:
+    C_out_calculated = stage2_design['C_out_parasitic']
+    C_out_estimate = config.C_OUT_P
+    
+    # Calculate difference as a ratio
+    ratio = C_out_calculated / C_out_estimate if C_out_estimate > 0 else float('inf')
+    
+    # Warn if the calculated value differs significantly from estimate (>2x or <0.5x)
+    if ratio > 1.5 or ratio < 0.75:
+        print(f"\n[WARNING] Output parasitic capacitance differs significantly from config estimate!")
+        print(f"  Calculated value: {C_out_calculated*1e12:.2f} pF")
+        print(f"  Config estimate:  {C_out_estimate*1e12:.2f} pF")
+        if ratio > 1:
+            print(f"  Ratio: {ratio:.2f}x (calculated is {ratio:.2f}x larger than estimate)")
+        else:
+            print(f"  Ratio: {ratio:.2f}x (calculated is {1/ratio:.2f}x smaller than estimate)")
+        print(f"  Consider updating C_OUT_P in config.py if this is expected.")
+
 # Extract key Stage 2 parameters
 gm2_actual = stage2_design['gm_total']
 # For common-source: A2 already calculated in design (includes RL effect)
@@ -141,10 +160,13 @@ print("\n" + "-"*80)
 print("STAGE 1: TELESCOPIC CASCODE DIFFERENTIAL AMPLIFIER")
 print("-"*80)
 
-Vout_target_stage1 = stage2_design["Vgate_n"]
-print(f"  Target Stage-1 Output CM for Stage-2 input: {Vout_target_stage1:.3f} V")
+# Apply correction factor to account for script/simulation mismatch
+Vout_target_stage1 = stage2_design["Vgate_n"] - config.INT_CM_CORRECTION
+print(f"  Stage 2 required input CM (Vgate_n): {stage2_design['Vgate_n']:.3f} V")
+print(f"  Target Stage-1 Output CM (with correction): {Vout_target_stage1:.3f} V")
+print(f"    (Correction factor: -{config.INT_CM_CORRECTION:.3f} V)")
 
-# Call the design function with the required output common-mode
+# Call the design function with the corrected output common-mode
 stage1_design = stage1.design_telescopic(
     Vout_target=Vout_target_stage1,
     mode=config.TELESCOPIC_MODE,
@@ -193,10 +215,63 @@ print(f"Static Error: {helpers.format_error_fraction(error_static_actual)} (from
 CC = params.CC
 CL = params.CL
 p1 = helpers.calculate_dominant_pole(gm1_actual, A2_actual, CC)
-p2 = helpers.calculate_non_dominant_pole(gm2_actual, CL)
+f_u_actual = helpers.calculate_unity_gain_freq(gm1_actual, CC)
+
+# Get actual C_out_parasitic from class AB design (doesn't depend on p2)
+if 'C_out_parasitic' in stage2_design:
+    C_out_parasitic_actual = stage2_design['C_out_parasitic']
+else:
+    # Fallback to config estimate if not available
+    C_out_parasitic_actual = config.C_OUT_P
+    print(f"[WARNING] C_out_parasitic not found in stage2_design, using config estimate")
+
+# Iterative solution for CL_eff and p2 (they depend on each other)
+# CL_eff depends on p2 frequency, and p2 depends on C_OUT which includes CL_eff
+# Formula from prelim_design_params.py: CL_eff = CL / (1 + (2*pi*p2*RL*CL)^2)
+# C_OUT = CL_eff + C_out_parasitic + CC * (1 + 1/A2)
+
+print(f"\n--- Output Capacitance Calculation (Iterative) ---")
+
+# Start with initial estimate for p2 (in Hz)
+p2_estimate_hz = config.P2_FACTOR * f_u_actual
+print(f"Initial p2 estimate: {p2_estimate_hz/1e6:.2f} MHz")
+
+# Iterate to find self-consistent solution
+max_iterations = 10
+for iteration in range(max_iterations):
+    # Calculate CL_eff from current p2 estimate (using formula from prelim_design_params.py)
+    CL_eff = CL / (1.0 + (2.0 * np.pi * p2_estimate_hz * params.RL * CL)**2)
+    print(iteration, CL_eff*1e12, p2_estimate_hz)
+    
+    # Calculate total output capacitance using CL_eff
+    C_Miller_out = CC * (1.0 + 1.0 / A2_actual)
+    C_OUT = CL_eff + C_out_parasitic_actual + C_Miller_out
+    
+    # Calculate new p2 from Rout and C_OUT
+    p2_rad = helpers.calculate_non_dominant_pole(Rout2_actual, C_OUT)
+    p2_new_hz = helpers.calculate_pole_frequency(p2_rad)
+    
+    # Update for next iteration
+    p2_estimate_hz = p2_new_hz
+
+# Final values after iteration
+CL_eff = CL / (1.0 + (2.0 * np.pi * p2_estimate_hz * params.RL * CL)**2)
+C_Miller_out = CC * (1.0 + 1.0 / A2_actual)
+C_OUT = CL_eff + C_out_parasitic_actual + C_Miller_out
+p2 = helpers.calculate_non_dominant_pole(Rout2_actual, C_OUT)
+f_p2 = helpers.calculate_pole_frequency(p2)
+
+# Print breakdown of C_OUT calculation
+print(f"Final p2: {f_p2/1e6:.2f} MHz")
+print(f"\nC_OUT breakdown:")
+print(f"  CL (load capacitance):            {CL*1e12:.2f} pF")
+print(f"  CL_eff (frequency-reduced):       {CL_eff*1e12:.2f} pF")
+print(f"  C_out_parasitic (from design):   {C_out_parasitic_actual*1e12:.2f} pF")
+print(f"  CC * (1 + 1/A2) (Miller effect): {C_Miller_out*1e12:.2f} pF  (A2 = {A2_actual:.1f})")
+print(f"  Total C_OUT:                     {C_OUT*1e12:.2f} pF")
+print(f"  Rout2:                           {Rout2_actual/1e3:.2f} kΩ")
 f_p1 = helpers.calculate_pole_frequency(p1)
 f_p2 = helpers.calculate_pole_frequency(p2)
-f_u_actual = helpers.calculate_unity_gain_freq(gm1_actual, CC)
 
 # Determine Rz value based on config setting
 if config.RZ_SETTING == "infinity":
