@@ -2,6 +2,7 @@ import numpy as np
 import math
 from look_up import *
 import prelim_design_params as params
+import design_helpers as helpers
 import csv
 
 """
@@ -29,7 +30,7 @@ except Exception as e:
     raise SystemExit
 
 
-def design_output_stage():
+def design_output_stage(k_AB = 10):
     # ---------------------------------------------------------------------
     # Project / spec parameters
     # ---------------------------------------------------------------------
@@ -37,26 +38,30 @@ def design_output_stage():
     CL = params.CL                         # pixel cap (F), e.g. 25e-12
     VDDH_MAX = params.VDDH_MAX             # maximum allowed VDDH (e.g. 1.8 V)
     deltaV = params.OUTPUT_SWING_MIN       # required swing at pixel, e.g. 1.4 V
-    gm2_target = params.gm2_required_stability  # total gm of stage 2 needed for AC
+    p2_min = params.p2_target              # minimum allowed p2 for stage 2 [Hz]
+    CC = params.CC                         # Miller compensation capacitor [F]
 
     # ---------------------------------------------------------------------
     # VDDH sweep: try max and some lower options (must be ≤ VDDH_MAX)
     # ---------------------------------------------------------------------
-    VDDH_candidates = sorted({VDDH_MAX, 1.7, 1.6, 1.5})
-    VDDH_candidates = [v for v in VDDH_candidates if 0.9 * deltaV < v <= VDDH_MAX]
+    VDDH_candidates = [1.55, 1.6]
 
     # ---------------------------------------------------------------------
     # Design knobs
     # ---------------------------------------------------------------------
-    A2_min = 15                   # minimum gain of output stage (V/V)
-    alpha_Ipk = 1.5               # safety factor on peak current vs ΔV/RL
-    k_AB = 20.0                   # Class-AB ratio: I_pk_available ≈ k_AB * Iq
+    A2_min = 15                    # minimum gain of output stage (V/V)
+    alpha_Ipk = 1.2                # safety factor on peak current vs ΔV/RL
+    k_AB_nom_for_floor = 10.0                    # Class-AB ratio: I_pk_available ≈ k_AB * Iq
+    VCM2 = 0.53                     # V - Minimum required Vgate_n (common-mode voltage for Stage 2 input)
 
     # gm/Id and L sweeps for both devices
-    gm_id_n_range = np.linspace(10, 20, 6)  # NMOS gm/Id candidates [1/V]
-    gm_id_p_range = np.linspace(10, 26, 6)  # PMOS gm/Id candidates [1/V]
-    L_n_candidates = [0.15, 0.18, 0.2, 0.3, 0.5]  # um
-    L_p_candidates = [0.15, 0.18, 0.2, 0.3, 0.5]
+    gm_id_n_range = np.linspace(6, 25, 12)   # NMOS gm/Id candidates [1/V]
+    gm_id_p_range = np.linspace(10, 30, 12)   # PMOS gm/Id candidates [1/V]
+    L_n_candidates = [0.15]  # um
+    L_p_candidates = [0.15]
+
+    # Iq scaling factors above the slew floor
+    Iq_scale_candidates = np.linspace(1.5, 2, 5)
 
     # ---------------------------------------------------------------------
     # Physics: RL–CL and current requirement
@@ -79,10 +84,24 @@ def design_output_stage():
     print(f"Minimum peak current I_pk_min = {I_pk_min*1e3:.3f} mA")
     print(f"Target I_pk (with margin)      = {I_pk_target*1e3:.3f} mA (α={alpha_Ipk:.1f})")
     print(f"Class-AB ratio k_AB           = {k_AB:.1f} (I_pk ≈ k_AB * Iq)")
-    print(f"Stage-2 gm target (total)     = {gm2_target*1e6:.2f} µS")
+    print(f"Min p2 target (stage 2)       = {p2_min/1e6:.2f} MHz")
     print()
 
     designs = []
+
+    # Debug counters for candidate rejection tracking
+    debug_counts = {
+        "total_candidates": 0,
+        "bad_gm_id": 0,
+        "bad_JD": 0,
+        "p2_pathological": 0,
+        "slew_fail": 0,
+        "gain_fail": 0,
+        "p2_fail": 0,
+        "swing_fail": 0,
+        "vgate_n_fail": 0,
+        "lookup_exception": 0,
+    }
 
     # =====================================================================
     # Sweep over VDDH, gm/Id, L
@@ -107,187 +126,260 @@ def design_output_stage():
                     for gm_id_p in gm_id_p_range:
                         try:
                             # -------------------------------------------------
-                            # SINGLE BRANCH CURRENT:
-                            # gm2_target = gm_n + gm_p = Iq * (gm_id_n + gm_id_p)
-                            # → Iq set by gm2_target and gm/Id choices.
-                            # -------------------------------------------------
-                            denom = gm_id_n + gm_id_p
-                            if denom <= 0:
-                                continue
-
-                            # --- Currents required by gm and by slew ---
-                            Iq_min_gm   = gm2_target / denom           # for gm_total >= gm2_target
-                            Iq_min_slew = I_pk_target / k_AB           # for I_pk_available >= I_pk_target
-
-                            # Choose the larger: satisfy BOTH constraints
-                            Iq = max(Iq_min_gm, Iq_min_slew)
-
-                            gm_n = gm_id_n * Iq            # S
-                            gm_p = gm_id_p * Iq            # S
-                            gm_total = gm_n + gm_p         # S
-
-                            # Current density J_D = ID/W from LUT, at VDS ≈ Vout_CM
-                            JD_n = look_up_vs_gm_id(
-                                nch_2v, "ID_W", gm_id_n, l=L_n, vds=Vout_CM
-                            )  # A/um
-                            JD_p = look_up_vs_gm_id(
-                                pch_2v, "ID_W", gm_id_p, l=L_p, vds=(VDDH - Vout_CM)
-                            )  # A/um (VSD as VDS for pch LUT)
-
-                            if JD_n <= 0 or JD_p <= 0:
-                                continue
-
-                            # Widths (same Iq flows in N and P at DC)
-                            Wn = Iq / JD_n  # um
-                            Wp = Iq / JD_p  # um
-
-                            # -------------------------------------------------
-                            # Rough parasitic output capacitance at Vout
-                            #   - Use CDD_W (drain-side cap per unit width)
-                            #   - Only count the caps that sit directly on Vout
-                            # -------------------------------------------------
-                            CDDn_W = float(
-                                look_up_vs_gm_id(
-                                    nch_2v,
-                                    "CDD_W",
-                                    gm_id_n,
-                                    vds=Vout_CM,
-                                    l=L_n,
-                                )
-                            )
-                            CDDp_W = float(
-                                look_up_vs_gm_id(
-                                    pch_2v,
-                                    "CDD_W",
-                                    gm_id_p,
-                                    vds=(VDDH - Vout_CM),
-                                    l=L_p,
-                                )
-                            )
-
-                            # Cap contribution from each device (F)
-                            C_par_n = Wn * CDDn_W
-                            C_par_p = Wp * CDDp_W
-
-                            # Total MOS-only parasitic cap hanging on Vout
-                            C_out_parasitic = C_par_n + C_par_p
-
-                            # Intrinsic gain: gm/gds → gds = gm / (gm/gds)
-                            gm_gds_n = look_up_vs_gm_id(
-                                nch_2v, "GM_GDS", gm_id_n, l=L_n, vds=Vout_CM
-                            )
-                            gm_gds_p = look_up_vs_gm_id(
-                                pch_2v, "GM_GDS", gm_id_p, l=L_p, vds=(VDDH - Vout_CM)
-                            )
-
-                            gm_gds_n = float(gm_gds_n)
-                            gm_gds_p = float(gm_gds_p)
-                            if gm_gds_n <= 0:
-                                gm_gds_n = 1e-3
-                            if gm_gds_p <= 0:
-                                gm_gds_p = 1e-3
-
-                            gds_n = gm_n / gm_gds_n
-                            gds_p = gm_p / gm_gds_p
-                            rout = 1.0 / (gds_n + gds_p)
-                            A2 = gm_total * rout  # V/V
-
-                            # Slew capability: rough Class-AB estimate
-                            I_pk_available = k_AB * Iq   # A
-
-                            # -------------------------------------------------
-                            # Headroom / swing calculation using gm/Id
-                            # Approximate VDS,sat ≈ Vov ≈ 1 / (gm/Id)
+                            # Slew-limited minimum Iq (floor):
+                            # I_pk_available = k_AB * Iq >= I_pk_target
+                            # => Iq >= I_pk_target / k_AB
+                            # We'll sweep Iq = Iq_min_slew * scale.
                             # -------------------------------------------------
                             if gm_id_n <= 0 or gm_id_p <= 0:
+                                debug_counts["bad_gm_id"] += 1
                                 continue
 
-                            Vov_n = 1.0 / gm_id_n   # ≈ VDSAT_n
-                            Vov_p = 1.0 / gm_id_p   # ≈ VDSAT_p
+                            Iq_min_slew = I_pk_target / k_AB_nom_for_floor
 
-                            V_low_sat = Vov_n
-                            V_high_sat = VDDH - Vov_p
-                            swing_actual = V_high_sat - V_low_sat
+                            for Iq_scale in Iq_scale_candidates:
+                                debug_counts["total_candidates"] += 1
+                                Iq = Iq_min_slew * Iq_scale
 
-                            # -------------------------------------------------
-                            # Compute gate bias voltages for this operating point
-                            # -------------------------------------------------
-                            # VGS_n and VGS_p from gm/Id tables at chosen VDS, L
-                            VGS_n = float(
-                                look_up_vgs_vs_gm_id(
-                                    nch_2v, gm_id_n, vds=Vout_CM, l=L_n
+                                # gm from gm/Id
+                                gm_n = gm_id_n * Iq            # S
+                                gm_p = gm_id_p * Iq            # S
+                                gm_total = gm_n + gm_p         # S
+
+                                # Current density J_D = ID/W from LUT, at VDS ≈ Vout_CM
+                                JD_n = look_up_vs_gm_id(
+                                    nch_2v, "ID_W", gm_id_n, l=L_n, vds=Vout_CM
+                                )  # A/um
+                                JD_p = look_up_vs_gm_id(
+                                    pch_2v, "ID_W", gm_id_p, l=L_p, vds=(VDDH - Vout_CM)
+                                )  # A/um (VSD as VDS for pch LUT)
+
+                                if JD_n <= 0 or JD_p <= 0:
+                                    debug_counts["bad_JD"] += 1
+                                    continue
+
+                                # Widths (same Iq flows in N and P at DC)
+                                Wn = Iq / JD_n  # um
+                                Wp = Iq / JD_p  # um
+
+                                # -------------------------------------------------
+                                # Rough parasitic output capacitance at Vout
+                                #   - Use CDD_W (drain-side cap per unit width)
+                                #   - Only count the caps that sit directly on Vout
+                                # -------------------------------------------------
+                                CDDn_W = float(
+                                    look_up_vs_gm_id(
+                                        nch_2v,
+                                        "CDD_W",
+                                        gm_id_n,
+                                        vds=Vout_CM,
+                                        l=L_n,
+                                    )
                                 )
-                            )
-                            VGS_p_mag = float(
-                                look_up_vgs_vs_gm_id(
-                                    pch_2v, gm_id_p, vds=(VDDH - Vout_CM), l=L_p
+                                CDDp_W = float(
+                                    look_up_vs_gm_id(
+                                        pch_2v,
+                                        "CDD_W",
+                                        gm_id_p,
+                                        vds=(VDDH - Vout_CM),
+                                        l=L_p,
+                                    )
                                 )
-                            )
 
-                            # NMOS: source at 0 V → gate DC = VGS_n
-                            Vgate_n = VGS_n
+                                # Cap contribution from each device (F)
+                                C_par_n = Wn * CDDn_W
+                                C_par_p = Wp * CDDp_W
 
-                            # PMOS: source at VDDH, VSG magnitude = VGS_p_mag
-                            # Gate is below VDDH by that magnitude
-                            Vgate_p = VDDH - VGS_p_mag
+                                # Total MOS-only parasitic cap hanging on Vout
+                                C_out_parasitic = C_par_n + C_par_p
 
-                            # Gate-to-gate DC bias:
-                            # Vbias = Vgp - Vgn, so PMOS gate = NMOS gate + Vbias
-                            Vbias_g_p_minus_g_n = Vgate_p - Vgate_n
-
-                            # -------------------------------------------------
-                            # Constraints:
-                            # 1) Slew: need I_pk_available >= I_pk_target
-                            # 2) Gain: need A2 >= A2_min
-                            # 3) Swing: [Vout_min_req, Vout_max_req] inside [V_low_sat, V_high_sat]
-                            # -------------------------------------------------
-                            if I_pk_available < I_pk_target:
-                                continue
-                            if A2 < A2_min:
-                                continue
-                            if (Vout_min_req < V_low_sat) or (Vout_max_req > V_high_sat):
-                                continue
-
-                            # Store valid design
-                            designs.append(
-                                dict(
-                                    VDDH=VDDH,
-                                    Vout_CM=Vout_CM,
-                                    V_low_sat=V_low_sat,
-                                    V_high_sat=V_high_sat,
-                                    swing_actual=swing_actual,
-
-                                    L_n=L_n,
-                                    gm_id_n=gm_id_n,
-                                    Wn=Wn,
-                                    Iq_n=Iq,
-
-                                    L_p=L_p,
-                                    gm_id_p=gm_id_p,
-                                    Wp=Wp,
-                                    Iq_p=Iq,
-
-                                    Iq_total=Iq,      # branch / supply current at DC
-                                    gm_n=gm_n,
-                                    gm_p=gm_p,
-                                    gm_total=gm_total,
-                                    rout=rout,
-                                    A2=A2,
-                                    I_pk_available=I_pk_available,
-
-                                    VGS_n=VGS_n,
-                                    VGS_p=VGS_p_mag,
-                                    Vgate_n=Vgate_n,
-                                    Vgate_p=Vgate_p,
-                                    Vbias_g_p_minus_g_n=Vbias_g_p_minus_g_n,
-
-                                    C_out_parasitic=C_out_parasitic
+                                # Intrinsic gain: gm/gds → gds = gm / (gm/gds)
+                                gm_gds_n = look_up_vs_gm_id(
+                                    nch_2v, "GM_GDS", gm_id_n, l=L_n, vds=Vout_CM
                                 )
-                            )
+                                gm_gds_p = look_up_vs_gm_id(
+                                    pch_2v, "GM_GDS", gm_id_p, l=L_p, vds=(VDDH - Vout_CM)
+                                )
+
+                                gm_gds_n = float(gm_gds_n)
+                                gm_gds_p = float(gm_gds_p)
+                                if gm_gds_n <= 0:
+                                    gm_gds_n = 1e-3
+                                if gm_gds_p <= 0:
+                                    gm_gds_p = 1e-3
+
+                                gds_n = gm_n / gm_gds_n
+                                gds_p = gm_p / gm_gds_p
+                                rout = 1.0 / (gds_n + gds_p)
+                                A2 = gm_total * rout  # V/V
+
+                                # Slew capability: rough Class-AB estimate
+                                I_pk_available = k_AB * Iq   # A
+
+                                # -------------------------------------------------
+                                # Output pole p2 for this candidate
+                                # Self-consistent solution with CL_eff(p2):
+                                #   CL_eff = CL / (1 + (ω2 * RL * CL)^2)
+                                #   C_eff_p2 = CL_eff + C_out_parasitic + C_FB
+                                #   p2 = 1 / (2π * rout * C_eff_p2)
+                                # -------------------------------------------------
+                                A2_safe = max(A2, 1.0)
+
+                                # Start from p2_min as initial guess
+                                p2 = max(p2_min, 1.0)  # avoid zero / negative
+
+                                for _ in range(10):
+                                    CL_eff = helpers.calculate_CL_eff(CL, p2, RL)
+                                    C_eff_p2 = helpers.calculate_C_OUT(CL_eff, C_out_parasitic, params.C_FB)
+
+                                    if C_eff_p2 <= 0:
+                                        # pathological; kill this candidate
+                                        p2 = 0.0
+                                        debug_counts["p2_pathological"] += 1
+                                        break
+
+                                    p2_new = 1.0 / (2.0 * math.pi * rout * C_eff_p2)
+
+                                    # Convergence check (relative)
+                                    if p2 > 0 and abs(p2_new - p2) / p2 < 1e-3:
+                                        p2 = p2_new
+                                        break
+
+                                    p2 = p2_new
+
+                                # -------------------------------------------------
+                                # Headroom / swing calculation using gm/Id
+                                # Approximate VDS,sat ≈ Vov ≈ 1 / (gm/Id)
+                                # -------------------------------------------------
+                                Vov_n = 1.0 / gm_id_n   # ≈ VDSAT_n
+                                Vov_p = 1.0 / gm_id_p   # ≈ VDSAT_p
+
+                                V_low_sat = Vov_n
+                                V_high_sat = VDDH - Vov_p
+                                swing_actual = V_high_sat - V_low_sat
+
+                                # -------------------------------------------------
+                                # Compute gate bias voltages for this operating point
+                                # -------------------------------------------------
+                                # VGS_n and VGS_p from gm/Id tables at chosen VDS, L
+                                VGS_n = float(
+                                    look_up_vgs_vs_gm_id(
+                                        nch_2v, gm_id_n, vds=Vout_CM, l=L_n
+                                    )
+                                )
+                                VGS_p_mag = float(
+                                    look_up_vgs_vs_gm_id(
+                                        pch_2v, gm_id_p, vds=(VDDH - Vout_CM), l=L_p
+                                    )
+                                )
+
+                                # NMOS: source at 0 V → gate DC = VGS_n
+                                Vgate_n = VGS_n
+
+                                # PMOS: source at VDDH, VSG magnitude = VGS_p_mag
+                                # Gate is below VDDH by that magnitude
+                                Vgate_p = VDDH - VGS_p_mag
+
+                                # Gate-to-gate DC bias:
+                                # Vbias = Vgp - Vgn, so PMOS gate = NMOS gate + Vbias
+                                Vbias_g_p_minus_g_n = Vgate_p - Vgate_n
+
+                                # -------------------------------------------------
+                                # Constraints:
+                                # 1) Slew: need I_pk_available >= I_pk_target
+                                # 2) Gain: need A2 >= A2_min
+                                # 3) (Optional) p2: could enforce p2 >= p2_min if desired
+                                # 4) Swing: [Vout_min_req, Vout_max_req] inside [V_low_sat, V_high_sat]
+                                # 5) Vgate_n: need Vgate_n >= VCM2 (for Stage 1 output CM compatibility)
+                                # -------------------------------------------------
+                                if I_pk_available < I_pk_target:
+                                    debug_counts["slew_fail"] += 1
+                                    continue
+                                if A2 < A2_min:
+                                    debug_counts["gain_fail"] += 1
+                                    continue
+                                if p2 < p2_min:
+                                    debug_counts["p2_fail"] += 1
+                                    continue
+                                if (Vout_min_req < V_low_sat) or (Vout_max_req > V_high_sat):
+                                    debug_counts["swing_fail"] += 1
+                                    continue
+                                if Vgate_n < VCM2:
+                                    debug_counts["vgate_n_fail"] += 1
+                                    continue
+
+                                # Store valid design
+                                designs.append(
+                                    dict(
+                                        VDDH=VDDH,
+                                        Vout_CM=Vout_CM,
+                                        V_low_sat=V_low_sat,
+                                        V_high_sat=V_high_sat,
+                                        swing_actual=swing_actual,
+
+                                        L_n=L_n,
+                                        gm_id_n=gm_id_n,
+                                        Wn=Wn,
+                                        Iq_n=Iq,
+
+                                        L_p=L_p,
+                                        gm_id_p=gm_id_p,
+                                        Wp=Wp,
+                                        Iq_p=Iq,
+
+                                        Iq_total=Iq,      # branch / supply current at DC
+                                        gm_n=gm_n,
+                                        gm_p=gm_p,
+                                        gm_total=gm_total,
+                                        rout=rout,
+                                        A2=A2,
+                                        I_pk_available=I_pk_available,
+
+                                        VGS_n=VGS_n,
+                                        VGS_p=VGS_p_mag,
+                                        Vgate_n=Vgate_n,
+                                        Vgate_p=Vgate_p,
+                                        Vbias_g_p_minus_g_n=Vbias_g_p_minus_g_n,
+
+                                        C_out_parasitic=C_out_parasitic,
+                                        p2=p2,
+                                        Iq_scale=Iq_scale
+                                    )
+                                )
 
                         except Exception:
                             # Skip anything that causes lookup to blow up
+                            debug_counts["lookup_exception"] += 1
                             continue
+
+    # ---------------------------------------------------------------------
+    # Print candidate statistics
+    # ---------------------------------------------------------------------
+    print("\n" + "=" * 70)
+    print("CANDIDATE EVALUATION STATISTICS")
+    print("=" * 70)
+    print(f"Total candidates evaluated: {debug_counts['total_candidates']}")
+    print(f"Valid designs found: {len(designs)}")
+    print(f"\nRejection breakdown:")
+    print(f"  bad_gm_id (gm_id <= 0):        {debug_counts['bad_gm_id']:6d}")
+    print(f"  bad_JD (JD <= 0):              {debug_counts['bad_JD']:6d}")
+    print(f"  p2_pathological (C_eff <= 0): {debug_counts['p2_pathological']:6d}")
+    print(f"  slew_fail (I_pk < target):     {debug_counts['slew_fail']:6d}")
+    print(f"  gain_fail (A2 < A2_min):      {debug_counts['gain_fail']:6d}")
+    print(f"  p2_fail (p2 < p2_min):        {debug_counts['p2_fail']:6d}")
+    print(f"  swing_fail (swing mismatch):  {debug_counts['swing_fail']:6d}")
+    print(f"  vgate_n_fail (Vgate_n < VCM2): {debug_counts['vgate_n_fail']:6d}")
+    print(f"  lookup_exception (error):     {debug_counts['lookup_exception']:6d}")
+    
+    total_rejected = (debug_counts['bad_gm_id'] + debug_counts['bad_JD'] + 
+                     debug_counts['p2_pathological'] + debug_counts['slew_fail'] + 
+                     debug_counts['gain_fail'] + debug_counts['p2_fail'] + 
+                     debug_counts['swing_fail'] + debug_counts['vgate_n_fail'] + 
+                     debug_counts['lookup_exception'])
+    print(f"\n  Total rejected:                {total_rejected:6d}")
+    print(f"  Acceptance rate:              {len(designs)/max(debug_counts['total_candidates'],1)*100:.2f}%")
+    print("=" * 70)
+    print()
 
     # ---------------------------------------------------------------------
     # Print & CSV export
@@ -317,10 +409,13 @@ def design_output_stage():
 
         "A2 [V/V]",
         "Iq_total [A]",
+        "Iq_scale",
+        "Power [mW]",
         "gm_n [S]",
         "gm_p [S]",
         "gm_total [S]",
         "rout [ohm]",
+        "p2 [Hz]",
         "I_pk_available [A]",
 
         "Vout_CM [V]",
@@ -355,12 +450,15 @@ def design_output_stage():
 
                 "A2 [V/V]": d["A2"],
                 "Iq_total [A]": d["Iq_total"],
+                "Iq_scale": d["Iq_scale"],
+                "Power [mW]": d["VDDH"] * d["Iq_total"] * 1e3,
 
                 "gm_n [S]": d["gm_n"],
                 "gm_p [S]": d["gm_p"],
                 "gm_total [S]": d["gm_total"],
 
                 "rout [ohm]": d["rout"],
+                "p2 [Hz]": d["p2"],
                 "I_pk_available [A]": d["I_pk_available"],
 
                 "Vout_CM [V]": d["Vout_CM"],
@@ -400,9 +498,12 @@ def design_output_stage():
     print(f"Wp          = {best['Wp']:.2f} um")
     print()
     print(f"Iq (branch) = {best['Iq_total']*1e6:.2f} uA")
+    print(f"Iq_scale    = {best['Iq_scale']:.2f}")
     print(f"A2          = {best['A2']:.2f} V/V")
     print(f"gm_total    = {best['gm_total']*1e6:.2f} uS")
     print(f"rout        = {best['rout']/1e3:.2f} kΩ")
+    print(f"p2          = {best['p2']/1e6:.2f} MHz "
+          f"(target ≥ {p2_min/1e6:.2f} MHz)")
     print(f"I_pk_av     ≈ {best['I_pk_available']*1e3:.2f} mA "
           f"(target ≥ {I_pk_target*1e3:.2f} mA)")
     print(f"C_out_p     = {best['C_out_parasitic']*1e12:.2f} pF")
@@ -415,6 +516,17 @@ def design_output_stage():
     print(f"Vbias(p-n)  = {best['Vbias_g_p_minus_g_n']:.3f} V  (PMOS gate = NMOS gate + Vbias)")
     print(f"P_out,DC    ≈ {P_mW:.2f} mW at VDDH={best['VDDH']:.2f} V")
     print("=" * 70)
+
+    # =====================================================================
+    #   CADENCE VALUES OUTPUT
+    # =====================================================================
+    print("\n=== Cadence Values ===")
+    print(f"vocm:                   {best['Vout_CM']:.3f}")
+    print(f"M10_L:                  {best['L_n']:.2f}u")
+    print(f"M10_W:                  {best['Wn']:.2f}u")
+    print(f"M11_L:                  {best['L_p']:.2f}u")
+    print(f"M11_W:                  {best['Wp']:.2f}u")
+    print(f"VB_OUT:                 {best['Vbias_g_p_minus_g_n']:.3f}")
 
     # Flags for caller
     best['swing_meets_spec'] = (best['swing_actual'] >= deltaV)

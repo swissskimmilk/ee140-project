@@ -21,12 +21,31 @@ Pipeline:
 
 import sys
 import io
+import os
+from datetime import datetime
+
 # Set UTF-8 encoding for Windows compatibility
 if sys.platform == 'win32':
     sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8', errors='replace')
 
 import numpy as np
 import math
+
+# Tee class to write to both terminal and file
+class Tee:
+    """Write to both file and stdout"""
+    def __init__(self, file, terminal):
+        self.file = file
+        self.terminal = terminal
+    
+    def write(self, message):
+        self.terminal.write(message)
+        self.file.write(message)
+        self.file.flush()  # Ensure it's written immediately
+    
+    def flush(self):
+        self.terminal.flush()
+        self.file.flush()
 
 # Import config first to check plot settings
 import config
@@ -44,6 +63,24 @@ import class_ab_output as stage2
 import calculate_settling
 import analyze_stability
 import design_helpers as helpers
+
+# Create output directory for design reports
+output_dir = "design_reports"
+os.makedirs(output_dir, exist_ok=True)
+
+# Open output file for writing
+output_filename = os.path.join(output_dir, f"design_report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt")
+# Save current stdout (which may already be wrapped for UTF-8 on Windows)
+terminal_stdout = sys.stdout
+output_file = None
+
+try:
+    output_file = open(output_filename, 'w', encoding='utf-8')
+    # Create Tee to write to both terminal and file
+    sys.stdout = Tee(output_file, terminal_stdout)
+except Exception as e:
+    print(f"[WARNING] Could not open output file {output_filename}: {e}")
+    print("[WARNING] Report will only be printed to terminal.")
 
 def print_header(title):
     """Print formatted section header"""
@@ -88,11 +125,10 @@ print(f"Required Unity Gain Frequency (f_u): {helpers.format_frequency_Hz(params
 print(f"Required Closed-Loop 3dB Bandwidth: {helpers.format_frequency_Hz(params.f_3db_cl_required)}")
 print(f"Miller Compensation Capacitor (CC): {params.CC*1e12:.2f} pF")
 print(f"Required Stage 1 Transconductance (gm1): {params.gm1_required*1e6:.2f} uS")
-print(f"Required Stage 2 Transconductance (gm2): {params.gm2_required_stability*1e6:.2f} uS")
+# Note: gm2_required_stability removed - using actual gm2 from design instead
 
 print("\n--- Nulling Resistor Options ---")
-print(f"Rz (Zero at Infinity): {params.Rz_infinity:.1f} Ohm")
-print(f"Rz (Cancel p2): {params.Rz_cancel_p2:.1f} Ohm")
+print("(Will be calculated from actual Stage 2 design parameters)")
 
 # ==============================================================================
 # SECTION 2: STAGE DESIGNS
@@ -141,10 +177,13 @@ gm2_actual = stage2_design['gm_total']
 # For common-source: A2 already calculated in design (includes RL effect)
 A2_actual = stage2_design['A2']
 Rout2_actual = stage2_design['rout']
-# Power: VDDH * Iq_total (DC quiescent power)
-P_stage2 = params.VDDH_MAX * stage2_design['Iq_total']
+# p2 is already calculated iteratively in class_ab_output design
+p2_actual_hz = stage2_design['p2']  # p2 in Hz from Stage 2 design
+# Get actual VDDH used by the design (may be less than VDDH_MAX)
+VDDH_actual = stage2_design['VDDH']
+# Power: VDDH_actual * Iq_total (DC quiescent power)
+P_stage2 = VDDH_actual * stage2_design['Iq_total']
 I_max = stage2_design['I_pk_available']
-VDDH_actual = params.VDDH_MAX
 
 # Get actual output swing from the design
 # The output stage design calculates this based on actual headroom constraints
@@ -217,7 +256,7 @@ CL = params.CL
 p1 = helpers.calculate_dominant_pole(gm1_actual, A2_actual, CC)
 f_u_actual = helpers.calculate_unity_gain_freq(gm1_actual, CC)
 
-# Get actual C_out_parasitic from class AB design (doesn't depend on p2)
+# Get actual C_out_parasitic from class AB design
 if 'C_out_parasitic' in stage2_design:
     C_out_parasitic_actual = stage2_design['C_out_parasitic']
 else:
@@ -225,60 +264,49 @@ else:
     C_out_parasitic_actual = config.C_OUT_P
     print(f"[WARNING] C_out_parasitic not found in stage2_design, using config estimate")
 
-# Iterative solution for CL_eff and p2 (they depend on each other)
-# CL_eff depends on p2 frequency, and p2 depends on C_OUT which includes CL_eff
-# Formula from prelim_design_params.py: CL_eff = CL / (1 + (2*pi*p2*RL*CL)^2)
-# C_OUT = CL_eff + C_out_parasitic + CC * (1 + 1/A2)
+# Use p2 from Stage 2 design (already calculated iteratively there)
+# Calculate CL_eff and C_OUT using the actual p2 from design
+print(f"\n--- Output Capacitance Calculation (using p2 from Stage 2 design) ---")
+print(f"p2 from Stage 2 design: {p2_actual_hz/1e6:.2f} MHz")
 
-print(f"\n--- Output Capacitance Calculation (Iterative) ---")
+# Calculate CL_eff using the actual p2 from design
+CL_eff = helpers.calculate_CL_eff(CL, p2_actual_hz, params.RL)
 
-# Start with initial estimate for p2 (in Hz)
-p2_estimate_hz = config.P2_FACTOR * f_u_actual
-print(f"Initial p2 estimate: {p2_estimate_hz/1e6:.2f} MHz")
+# Calculate total output capacitance
+C_OUT = helpers.calculate_C_OUT(CL_eff, C_out_parasitic_actual, params.C_FB)
 
-# Iterate to find self-consistent solution
-max_iterations = 10
-for iteration in range(max_iterations):
-    # Calculate CL_eff from current p2 estimate (using formula from prelim_design_params.py)
-    CL_eff = CL / (1.0 + (2.0 * np.pi * p2_estimate_hz * params.RL * CL)**2)
-    print(iteration, CL_eff*1e12, p2_estimate_hz)
-    
-    # Calculate total output capacitance using CL_eff
-    C_Miller_out = CC * (1.0 + 1.0 / A2_actual)
-    C_OUT = CL_eff + C_out_parasitic_actual + C_Miller_out
-    
-    # Calculate new p2 from Rout and C_OUT
-    p2_rad = helpers.calculate_non_dominant_pole(Rout2_actual, C_OUT)
-    p2_new_hz = helpers.calculate_pole_frequency(p2_rad)
-    
-    # Update for next iteration
-    p2_estimate_hz = p2_new_hz
+# f_p2 is already in Hz from Stage 2 design
+f_p2 = p2_actual_hz
 
-# Final values after iteration
-CL_eff = CL / (1.0 + (2.0 * np.pi * p2_estimate_hz * params.RL * CL)**2)
-C_Miller_out = CC * (1.0 + 1.0 / A2_actual)
-C_OUT = CL_eff + C_out_parasitic_actual + C_Miller_out
-p2 = helpers.calculate_non_dominant_pole(Rout2_actual, C_OUT)
-f_p2 = helpers.calculate_pole_frequency(p2)
+# Calculate nulling resistor values from actual design parameters
+# Rz_infinity: push zero to infinity => Rz = 1/gm2
+Rz_infinity_actual = 1.0 / gm2_actual
+# Rz_cancel_p2: approximate cancellation of p2
+Rz_cancel_p2_actual = (C_OUT + CC) / (gm2_actual * CC)
 
 # Print breakdown of C_OUT calculation
-print(f"Final p2: {f_p2/1e6:.2f} MHz")
 print(f"\nC_OUT breakdown:")
 print(f"  CL (load capacitance):            {CL*1e12:.2f} pF")
 print(f"  CL_eff (frequency-reduced):       {CL_eff*1e12:.2f} pF")
 print(f"  C_out_parasitic (from design):   {C_out_parasitic_actual*1e12:.2f} pF")
-print(f"  CC * (1 + 1/A2) (Miller effect): {C_Miller_out*1e12:.2f} pF  (A2 = {A2_actual:.1f})")
+print(f"  C_FB (feedback cap):              {params.C_FB*1e12:.2f} pF")
 print(f"  Total C_OUT:                     {C_OUT*1e12:.2f} pF")
 print(f"  Rout2:                           {Rout2_actual/1e3:.2f} kΩ")
+
+print(f"\n--- Nulling Resistor Values (from actual design) ---")
+print(f"  Actual gm2:                      {gm2_actual*1e6:.2f} uS")
+print(f"  Rz (Zero at Infinity):           {Rz_infinity_actual:.1f} Ohm")
+print(f"  Rz (Cancel p2):                  {Rz_cancel_p2_actual:.1f} Ohm")
+
 f_p1 = helpers.calculate_pole_frequency(p1)
-f_p2 = helpers.calculate_pole_frequency(p2)
+# f_p2 already set from p2_actual_hz (in Hz) from Stage 2 design
 
 # Determine Rz value based on config setting
 if config.RZ_SETTING == "infinity":
-    Rz_value = params.Rz_infinity
+    Rz_value = Rz_infinity_actual
     Rz_label = f"Rz = 1/gm2 = {Rz_value:.1f} Ohm (zero at infinity)"
 elif config.RZ_SETTING == "cancel_p2":
-    Rz_value = params.Rz_cancel_p2
+    Rz_value = Rz_cancel_p2_actual
     Rz_label = f"Rz = {Rz_value:.1f} Ohm (cancel p2)"
 else:  # "none"
     Rz_value = 0.0
@@ -317,8 +345,8 @@ if config.GENERATE_STABILITY_PLOTS:
         analyze_stability.A0 = A0_actual
         analyze_stability.CC = CC
         analyze_stability.CL = CL
-        analyze_stability.Rz_infinity = params.Rz_infinity
-        analyze_stability.Rz_cancel_p2 = params.Rz_cancel_p2
+        analyze_stability.Rz_infinity = Rz_infinity_actual
+        analyze_stability.Rz_cancel_p2 = Rz_cancel_p2_actual
         
         # Generate plot with selected Rz setting
         fig_stab, results_stab, metrics_stab = analyze_stability.generate_bode_plot(
@@ -533,9 +561,9 @@ for spec_name, passed, actual, requirement in checks:
 print("-" * 75)
 print(f"Overall: {pass_count}/{len(checks)} specifications met")
 
-if pass_count == len(checks):
-    print("\n*** [OK] DESIGN MEETS ALL SPECIFICATIONS! ***")
-else:
+all_specs_passed = (pass_count == len(checks))
+
+if not all_specs_passed:
     print(f"\n*** [X] DESIGN ISSUES: {len(checks) - pass_count} specification(s) not met ***")
     print("\nRecommendations for improvement:")
     
@@ -562,11 +590,11 @@ telescopic_mode_used = stage1_design['mode']
 mode_description = "high-swing PMOS load" if telescopic_mode_used == "high_swing" else "self-biased diode load"
 print(f"  - Stage 1: Telescopic cascode differential amplifier ({telescopic_mode_used} mode: {mode_description})")
 print("  - Stage 2: Class AB common-source output stage")
-# Get Rz setting description
+# Get Rz setting description (using actual calculated values)
 if config.RZ_SETTING == "infinity":
-    rz_description = f"Rz = 1/gm2 = {params.Rz_infinity:.1f} Ohm (zero at infinity)"
+    rz_description = f"Rz = 1/gm2 = {Rz_infinity_actual:.1f} Ohm (zero at infinity)"
 elif config.RZ_SETTING == "cancel_p2":
-    rz_description = f"Rz = {params.Rz_cancel_p2:.1f} Ohm (cancel p2)"
+    rz_description = f"Rz = {Rz_cancel_p2_actual:.1f} Ohm (cancel p2)"
 else:
     rz_description = "Rz = 0 (no nulling resistor)"
 print(f"  - Compensation: Miller capacitor (CC = {params.CC*1e12:.2f} pF) with {rz_description}")
@@ -579,7 +607,7 @@ print(f"  - VDD_L (Stage 1): {VDD_stage1_actual:.2f} V (effective, from design)"
 print(f"  - VDD_H (Stage 2): {VDDH_actual:.2f} V")
 print(f"\nCompensation:")
 print(f"  - Miller Capacitor (CC): {params.CC*1e12:.2f} pF")
-print(f"  - Recommended Rz: {params.Rz_infinity:.1f} - {params.Rz_cancel_p2:.1f} Ohm")
+print(f"  - Recommended Rz: {Rz_infinity_actual:.1f} - {Rz_cancel_p2_actual:.1f} Ohm")
 
 print("\n--- Performance Summary ---")
 print(f"DC Gain: {helpers.gain_to_dB(A0_actual):.1f} dB")
@@ -607,3 +635,44 @@ print("  - Run analyze_stability.py for Bode plots")
 print("  - Run individual stage scripts for detailed analysis")
 
 print("\n[OK] Design report complete!")
+
+# ==============================================================================
+# SECTION 8: CADENCE VALUES
+# ==============================================================================
+print_header("SECTION 8: CADENCE VALUES")
+
+print("\n=== Cadence Values ===")
+print(f"vddh:                  {VDDH_actual:.3f}")
+print(f"vddl:                  {params.VDDL_MAX:.3f}")
+print(f"vcm:                   {stage1_design['Vcm_in']:.3f}")
+print(f"IDC:                   {stage1_design['Id_branch']*2*1e6:.2f}u")
+print(f"M12_L:                 {stage1_design['L_in']:.2f}u")
+print(f"M12_W:                 {stage1_design['Wn']:.2f}u")
+print(f"M34_L:                 {stage1_design['L_casc_n']:.2f}u")
+print(f"M34_W:                 {stage1_design['W_casc']:.2f}u")
+print(f"M56_L:                 {stage1_design['L_p']:.2f}u")
+print(f"M56_W:                 {stage1_design['Wp_bot']:.2f}u")
+print(f"M78_L:                 {stage1_design['L_p']:.2f}u")
+print(f"M78_W:                 {stage1_design['Wp_top']:.2f}u")
+print(f"M9_L:                  {stage1_design['tail_L']:.2f}u")
+print(f"M9_W:                  {stage1_design['W_tail']:.2f}u")
+print(f"VBN:                   {stage1_design['Vbias_N_casc']:.3f}")
+print(f"VBPO:                  {stage1_design['Vbias_P_bot']:.3f}")
+print(f"vocm:                  {stage2_design['Vout_CM']:.3f}")
+print(f"M10_L:                 {stage2_design['L_n']:.2f}u")
+print(f"M10_W:                 {stage2_design['Wn']:.2f}u")
+print(f"M11_L:                 {stage2_design['L_p']:.2f}u")
+print(f"M11_W:                 {stage2_design['Wp']:.2f}u")
+print(f"VB_OUT:                {stage2_design['Vbias_g_p_minus_g_n']:.3f}")
+print(f"RZ:                    {Rz_value:.1f}")
+print(f"CC:                    {params.CC*1e12:.2f}")
+
+# Print celebration message at the very end if all specs passed
+if all_specs_passed:
+    helpers.print_success_message(A0_actual, f_u_actual, pm_estimate, t_settle, P_total)
+
+# Restore original stdout and close file
+if output_file is not None:
+    sys.stdout = terminal_stdout
+    output_file.close()
+    print(f"\n[OK] Design report saved to: {output_filename}")

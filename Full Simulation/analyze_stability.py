@@ -11,10 +11,19 @@ import prelim_design_params as params
 # ==============================================================================
 # DESIGN-LEVEL PARAMETERS (FROM YOUR SIZING SCRIPTS)
 # ==============================================================================
+# NOTE: These are default values for standalone execution.
+# When called from design_report.py, these are overridden with actual design values.
 
 # Transconductances (from gm/ID / operating point)
 gm1 = params.gm1_required              # Stage 1 transconductance (S)
-gm2 = params.gm2_required_stability    # Stage 2 transconductance (S)
+# gm2_required_stability removed - will be set by design_report.py with actual gm2
+# Default to a placeholder value (will be overridden)
+try:
+    gm2 = params.gm2_required_stability    # Stage 2 transconductance (S) - OLD, deprecated
+except AttributeError:
+    # If gm2_required_stability doesn't exist, use a default placeholder
+    # This will be overridden by design_report.py with actual gm2 from design
+    gm2 = 1e-3  # Placeholder - will be overridden
 
 # Stage gains (FEED THESE IN FROM YOUR OTHER SCRIPTS)
 A1 = params.FIRST_STAGE_GAIN                 # Stage 1 DC gain (V/V)
@@ -26,9 +35,14 @@ CC = params.CC                         # Miller compensation capacitor (F)
 CL = params.CL                         # Load capacitance seen at output node (F)
 RL = params.RL                         # External load resistance (Ohm) - used only for printing
 
-# Nulling resistor options
-Rz_infinity = params.Rz_infinity       # Rz that pushes zero to infinity (~1/gm2)
-Rz_cancel = params.Rz_cancel_p2        # Rz that approximately cancels p2
+# Nulling resistor options (will be overridden by design_report.py with actual values)
+try:
+    Rz_infinity = params.Rz_infinity       # Rz that pushes zero to infinity (~1/gm2)
+    Rz_cancel = params.Rz_cancel_p2        # Rz that approximately cancels p2
+except AttributeError:
+    # If Rz values don't exist, use placeholders (will be overridden)
+    Rz_infinity = 100.0  # Placeholder
+    Rz_cancel = 200.0   # Placeholder
 
 # Target specs
 f_u_target = params.f_u_required       # Target unity gain frequency (Hz) for loop

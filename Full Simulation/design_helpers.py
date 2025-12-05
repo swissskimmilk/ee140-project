@@ -430,3 +430,73 @@ def format_error_fraction(error_fraction, decimal_places=4):
         Formatted string (e.g., "0.2000%")
     """
     return f"{error_fraction * 100:.{decimal_places}f}%"
+
+
+# ==============================================================================
+# OUTPUT CAPACITANCE CALCULATIONS
+# ==============================================================================
+
+def calculate_CL_eff(CL, p2_hz, RL):
+    """
+    Calculate effective load capacitance accounting for frequency-dependent reduction.
+    
+    Formula: CL_eff = CL / (1 + (2*pi*p2*RL*CL)^2)
+    
+    This accounts for the fact that at high frequencies (near p2), the load
+    capacitance appears smaller due to the RL-CL filter effect.
+    
+    Args:
+        CL: Load capacitance (F)
+        p2_hz: Non-dominant pole frequency (Hz)
+        RL: Load resistance (Ohm)
+    
+    Returns:
+        Effective load capacitance (F)
+    """
+    omega_p2 = 2.0 * np.pi * p2_hz
+    return CL / (1.0 + (omega_p2 * RL * CL)**2)
+
+
+def calculate_C_OUT(CL_eff, C_out_parasitic, C_FB):
+    """
+    Calculate total output capacitance at the amplifier output node.
+    
+    Formula: C_OUT = CL_eff + C_out_parasitic + C_FB
+    
+    This is the total capacitance that determines the non-dominant pole p2.
+    Note: CC (Miller compensation capacitor) does NOT contribute to output
+    capacitance as it is between internal nodes, not at the output.
+    
+    Args:
+        CL_eff: Effective load capacitance (F) - frequency-reduced CL
+        C_out_parasitic: Parasitic capacitance from output stage devices (F)
+        C_FB: Feedback capacitance (F)
+    
+    Returns:
+        Total output capacitance (F)
+    """
+    return CL_eff + C_out_parasitic + C_FB
+
+
+# ==============================================================================
+# REPORT FORMATTING
+# ==============================================================================
+
+def print_success_message(A0_actual, f_u_actual, pm_estimate, t_settle, P_total):
+    """
+    Print a cute ASCII art success message when all design specifications are met.
+    
+    Args:
+        A0_actual: Actual DC gain (V/V)
+        f_u_actual: Actual unity gain frequency (Hz)
+        pm_estimate: Estimated phase margin (degrees)
+        t_settle: Settling time (s), can be float('inf')
+        P_total: Total power consumption (W)
+    """
+    print("\n")
+    print("\n" + " "*25 + "        \\   ^__^")
+    print(" "*25 + "         \\  (oo)\\_______")
+    print(" "*25 + "            (__)\\       )\\/\\")
+    print(" "*25 + "                ||----w |")
+    print(" "*25 + "                ||     ||")
+    print("\n")

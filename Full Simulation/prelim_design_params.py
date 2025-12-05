@@ -1,6 +1,8 @@
 import math
 import config
-import numpy as np 
+import numpy as np
+import design_helpers as helpers
+import design_helpers as helpers 
 
 """
 Preliminary design calculations for the 2-stage Miller-compensated op-amp.
@@ -28,6 +30,7 @@ TOTAL_ERROR_SPEC  = config.TOTAL_ERROR_SPEC
 POWER_MAX         = config.POWER_MAX
 PHASE_MARGIN_MIN  = config.PHASE_MARGIN_MIN
 OUTPUT_SWING_MIN  = config.OUTPUT_SWING_MIN
+C_FB = config.C_FB
 
 # ----- 2. TIMING & ERROR BUDGET (Imported from config.py) -----
 REFRESH_RATE              = config.REFRESH_RATE
@@ -41,7 +44,7 @@ P2_FACTOR                 = config.P2_FACTOR
 
 # Design choice: how much faster (in CLOSED LOOP) we want the amp
 # compared to the load RC pole. This is a heuristic margin.
-MARGIN_OVER_LOAD_CL = 2.2
+MARGIN_OVER_LOAD_CL = 2
 
 # ----- 3. BASIC LOAD CALCS -----
 
@@ -128,17 +131,17 @@ gm1_required = 2.0 * math.pi * CC * f_u_required
 # For rough modeling:
 #   p2 ≈ gm2 / C_OUT
 # with
-#   C_OUT = CL + C_OUT_P + Cc (1 + 1/Av2)
+#   C_OUT = CL_eff + C_OUT_P + C_FB
 #
 # We want p2 = P2_FACTOR * f_u_required (e.g. 2x, 2.5x, etc.)
 
 p2_target = P2_FACTOR * f_u_required
 
-CL_eff = CL / (1.0 + (2 * np.pi * p2_target * RL * CL)**2)
+CL_eff = helpers.calculate_CL_eff(CL, p2_target, RL)
+C_OUT = helpers.calculate_C_OUT(CL_eff, C_OUT_P, C_FB)
 
-C_OUT = CL_eff + C_OUT_P + CC * (1.0 + 1.0 / SECOND_STAGE_GAIN)
-
-gm2_required_stability = 2.0 * math.pi * C_OUT * p2_target
+# This turns out to be a totally bullshit approximation, which we will stop using 
+# gm2_required_stability = 2.0 * math.pi * C_OUT * p2_target
 
 # ----- 9. NULLING RESISTOR DESIGN (Rz) -----
 #
@@ -149,8 +152,8 @@ gm2_required_stability = 2.0 * math.pi * C_OUT * p2_target
 # Strategy A (Rz_infinity): push zero to infinity => Rz = 1/gm2
 # Strategy B (Rz_cancel_p2): approximate cancellation of p2
 
-Rz_infinity = 1.0 / gm2_required_stability
-Rz_cancel_p2 = (C_OUT + CC) / (gm2_required_stability * CC)
+# Rz_infinity = 1.0 / gm2_required_stability
+# Rz_cancel_p2 = (C_OUT + CC) / (gm2_required_stability * CC)
 
 
 def print_design_report():
@@ -196,12 +199,6 @@ def print_design_report():
     print(f"C_OUT estimate:             {C_OUT*1e12:.2f} pF")
     print(f"Target p2:                  {p2_target/1e6:.2f} MHz "
           f"(= {P2_FACTOR:.2f} * f_u)")
-    print(f"Required gm2 (stability):   {gm2_required_stability*1e6:.2f} µS")
-    print("")
-    
-    print(f"--- Nulling Resistor (Rz) ---")
-    print(f"Option A (zero @ ∞):        Rz = {Rz_infinity:.2f} Ω")
-    print(f"Option B (cancel p2):       Rz = {Rz_cancel_p2:.2f} Ω")
     print("")
 
 if __name__ == "__main__":

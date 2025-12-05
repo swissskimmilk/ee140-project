@@ -56,7 +56,7 @@ def design_telescopic(
     casc_headroom_n = 0.15   # VDS for NMOS cascode (M3/M4)
     # NOTE: we NO LONGER treat headroom_p_bot as literal VSD.
     # It can be interpreted as an *extra* "comfort margin" if you want.
-    headroom_p_bot = 0.00   # extra slack beyond Vov; keep 0 or small
+    headroom_p_bot = 0.02   # extra slack beyond Vov; keep 0 or small
 
     # gm/ID search grids
     gm_ID_bot_p_grid = np.arange(6, 22, 1)   # bottom PMOS gm/ID candidates
@@ -520,6 +520,24 @@ def design_telescopic(
         print("All headroom checks (approx Vov + margins) passed in gm/ID model.")
     print("=================================\n")
 
+    # =====================================================================
+    #   CADENCE VALUES OUTPUT
+    # =====================================================================
+    print("=== Cadence Values ===")
+    print(f"IDC:                   {tail_Id*1e6:.2f}u")
+    print(f"M12_L:                 {opt_n_l:.2f}u")
+    print(f"M12_W:                 {wn:.2f}u")
+    print(f"M34_L:                 {L_casc_n:.2f}u")
+    print(f"M34_W:                 {W_casc:.2f}u")
+    print(f"M56_L:                 {opt_p_l:.2f}u")
+    print(f"M56_W:                 {wp_bot:.2f}u")
+    print(f"M78_L:                 {opt_p_l:.2f}u")
+    print(f"M78_W:                 {wp_top:.2f}u")
+    print(f"M9_L:                  {tail_L:.2f}u")
+    print(f"M9_W:                  {W_tail:.2f}u")
+    print(f"VBN:                   {Vbias_N_casc:.3f}")
+    print(f"VBPO:                  {Vbias_P_bot:.3f}")
+
     return {
         "mode":           mode,
         "A1_gain":        A1_gain,
@@ -537,8 +555,11 @@ def design_telescopic(
         "Wp_bot":         wp_bot,
         "Wp_top":         wp_top,
         "W_tail":         W_tail,
+        "W_casc":         W_casc,
         "L_in":           opt_n_l,
         "L_p":            opt_p_l,
+        "L_casc_n":       L_casc_n,
+        "tail_L":         tail_L,
         "gm_ID_in":       opt_n_gm_id,
         "gm_ID_p_bot":    opt_gm_ID_bot_p,
         "gm_ID_p_top":    opt_gm_ID_top_p,
@@ -557,6 +578,6 @@ def design_telescopic(
 
 
 if __name__ == "__main__":
-    Vout_target_example = 0.503
+    Vout_target_example = 0.53
     res_hs  = design_telescopic(Vout_target_example, mode="high_swing")
     res_std = design_telescopic(Vout_target_example, mode="standard")

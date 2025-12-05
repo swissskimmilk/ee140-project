@@ -54,10 +54,11 @@ ERROR_SPLIT_STATIC_RATIO = 0.3  # Fraction of non-RC error allocated to static e
 CC = 0.8e-12  # Farads - Miller compensation capacitor (0.8 pF)
 
 # Estimates of parasitic capacitances and gains (used for preliminary calculations)
-C_OUT_P = 1e-12         # Farads - Estimated output parasitic capacitance
+C_FB = 0.1e-12
+C_OUT_P = 0.1e-12         # Farads - Estimated output parasitic capacitance
 FIRST_STAGE_GAIN = 200  # V/V - Estimated Stage 1 gain (actual from telescopic design may differ)
 SECOND_STAGE_GAIN = 37  # V/V - Estimated Stage 2 gain (actual from output stage design may differ)
-P2_FACTOR = 2.5           # Factor for non-dominant pole placement (p2 = P2_FACTOR * f_u)
+P2_FACTOR = 1.7           # Factor for non-dominant pole placement (p2 = P2_FACTOR * f_u)
 
 # ==============================================================================
 # 4. DESIGN SCRIPT SETTINGS
@@ -68,7 +69,7 @@ P2_FACTOR = 2.5           # Factor for non-dominant pole placement (p2 = P2_FACT
 # Options: "high_swing" or "standard"
 #   - "high_swing": High-swing PMOS load (top PMOS gate near Vout)
 #   - "standard": Simple self-biased load (both PMOS devices diode-connected)
-TELESCOPIC_MODE = "standard"
+TELESCOPIC_MODE = "high_swing"
 
 # Nulling Resistor (Rz) Setting
 # Options: "infinity", "cancel_p2", or "none"
@@ -80,7 +81,7 @@ RZ_SETTING = "infinity"
 # Common-Mode Correction Factor
 # This factor accounts for mismatch between design scripts and simulation.
 # The telescopic stage output CM target is set to: (Stage 2 required input CM) - INT_CM_CORRECTION
-INT_CM_CORRECTION = 0.04  # V - Correction factor for inter-stage common-mode matching
+INT_CM_CORRECTION = 0.044  # V - Correction factor for inter-stage common-mode matching
 
 # ==============================================================================
 # 5. PLOTTING OPTIONS
