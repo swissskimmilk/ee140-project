@@ -78,6 +78,15 @@ TELESCOPIC_MODE = "high_swing"
 #   - "none": No nulling resistor (Rz = 0)
 RZ_SETTING = "infinity"
 
+# Current mirror ratio (tail device : bias leg)
+#   - Used to derive IB and W_MIRR for the off-chip bias current mirror
+CURRENT_MIRROR_RATIO = 8.0
+
+# Minimum bias branch current
+#   - Minimum current through the PMOS bias branch (diode-connected devices)
+#   - The bias branch current will be minimized to be as close as possible to this value
+BIAS_BRANCH_CURRENT_MIN = 2e-6  # A - Minimum bias branch current (2 uA)
+
 # Common-Mode Correction Factor
 # This factor accounts for mismatch between design scripts and simulation.
 # The telescopic stage output CM target is set to: (Stage 2 required input CM) - INT_CM_CORRECTION

@@ -63,6 +63,7 @@ import class_ab_output as stage2
 import calculate_settling
 import analyze_stability
 import design_helpers as helpers
+import generate_bias as bias_gen
 
 # Create output directory for design reports
 output_dir = "design_reports"
@@ -637,9 +638,70 @@ print("  - Run individual stage scripts for detailed analysis")
 print("\n[OK] Design report complete!")
 
 # ==============================================================================
-# SECTION 8: CADENCE VALUES
+# SECTION 8: CURRENT MIRROR PARAMETERS
 # ==============================================================================
-print_header("SECTION 8: CADENCE VALUES")
+print_header("SECTION 8: CURRENT MIRROR PARAMETERS")
+
+print("\n--- Current Mirror Sizing ---")
+tail_current_stage1 = stage1_design['Id_branch'] * 2.0  # Tail current of telescopic (M9)
+mirror_ratio = config.CURRENT_MIRROR_RATIO
+IB = tail_current_stage1 / mirror_ratio
+W_MIRR = stage1_design['W_tail'] / mirror_ratio
+L_MIRR = stage1_design['tail_L']  # Same length as tail device
+
+print(f"Current mirror ratio (M9:IB): {mirror_ratio:.2f}")
+print(f"Tail current (Stage 1 M9):    {tail_current_stage1*1e6:.2f} uA")
+print(f"IB:                           {IB*1e6:.2f}u")
+print(f"MIRR_W:                       {W_MIRR:.2f}u")
+print(f"MIRR_L:                       {L_MIRR:.2f}u")
+
+# --------------------------------------------------------------------------
+# Bias generation for VBP0 and VBN using PMOS diode branch
+# --------------------------------------------------------------------------
+print("\n--- Bias Generation (Shared PMOS Branch) ---")
+
+# Use full VDD (VDDL_MAX) for bias branch, not the effective VDD with margin
+VDD_bias = params.VDDL_MAX
+VBP0_target = stage1_design['Vbias_P_bot']      # PMOS bottom bias
+VBN_target = stage1_design['Vbias_N_casc']      # NMOS cascode bias
+
+print(f"Desired VBP0 (from Stage 1): {VBP0_target:.3f} V")
+print(f"Desired VBN  (from Stage 1): {VBN_target:.3f} V")
+
+# Determine which bias is higher for the two-diode branch
+# PMOS diodes drop voltage, so we need: VDD > Vbias_high > Vbias_low
+if VBN_target > VBP0_target:
+    # VBN is higher, so use VBN as high bias and VBP0 as low bias
+    Vbias_high_target = VBN_target
+    Vbias_low_target = VBP0_target
+    print(f"\nNote: VBN > VBP0, using VBN as high bias and VBP0 as low bias")
+else:
+    # VBP0 is higher (or equal), use VBP0 as high bias and VBN as low bias
+    Vbias_high_target = VBP0_target
+    Vbias_low_target = VBN_target
+    print(f"\nNote: VBP0 >= VBN, using VBP0 as high bias and VBN as low bias")
+
+# Use a two-diode PMOS branch from VDD → Vbias_high → Vbias_low
+# Branch current is minimized to meet minimum from config (BIAS_BRANCH_CURRENT_MIN)
+two_diode_bias = bias_gen.design_two_diode_bias_branch(
+    VDD=VDD_bias,
+    Vbias_high_target=Vbias_high_target,
+    Vbias_low_target=Vbias_low_target,
+)
+
+I_bias_branch = two_diode_bias["Id_branch"]
+branch_over_IB = I_bias_branch / IB if IB > 0 else float("inf")
+W_bias_from_mirror = branch_over_IB * W_MIRR
+
+print(f"\nBias branch current:          {I_bias_branch*1e6:.3f} uA")
+print(f"IB (from current mirror):     {IB*1e6:.3f} uA")
+print(f"Required branch / IB ratio:   {branch_over_IB:.2f} x")
+print(f"MIRR_B_W:                     {W_bias_from_mirror:.2f}u")
+
+# ==============================================================================
+# SECTION 9: CADENCE VALUES
+# ==============================================================================
+print_header("SECTION 9: CADENCE VALUES")
 
 print("\n=== Cadence Values ===")
 print(f"vddh:                  {VDDH_actual:.3f}")
@@ -657,7 +719,6 @@ print(f"M78_W:                 {stage1_design['Wp_top']:.2f}u")
 print(f"M9_L:                  {stage1_design['tail_L']:.2f}u")
 print(f"M9_W:                  {stage1_design['W_tail']:.2f}u")
 print(f"VBN:                   {stage1_design['Vbias_N_casc']:.3f}")
-print(f"VBPO:                  {stage1_design['Vbias_P_bot']:.3f}")
 print(f"vocm:                  {stage2_design['Vout_CM']:.3f}")
 print(f"M10_L:                 {stage2_design['L_n']:.2f}u")
 print(f"M10_W:                 {stage2_design['Wn']:.2f}u")
@@ -666,6 +727,15 @@ print(f"M11_W:                 {stage2_design['Wp']:.2f}u")
 print(f"VB_OUT:                {stage2_design['Vbias_g_p_minus_g_n']:.3f}")
 print(f"RZ:                    {Rz_value:.1f}")
 print(f"CC:                    {params.CC*1e12:.2f}")
+print(f"VBPO:                  {stage1_design['Vbias_P_bot']:.3f}")
+print(f"IB:                    {IB*1e6:.2f}u")
+print(f"MIRR_L:                {L_MIRR:.2f}u")
+print(f"MIRR_W:                {W_MIRR:.2f}u")
+print(f"LB_TOP:                {two_diode_bias['top']['L_bias']:.2f}u")
+print(f"WB_TOP:                {two_diode_bias['top']['W_bias']:.2f}u")
+print(f"LB_BOT:                {two_diode_bias['bottom']['L_bot']:.2f}u")
+print(f"WB_BOT:                {two_diode_bias['bottom']['W_bot']:.2f}u")
+print(f"MIRR_B_W:              {W_bias_from_mirror:.2f}u")
 
 # Print celebration message at the very end if all specs passed
 if all_specs_passed:

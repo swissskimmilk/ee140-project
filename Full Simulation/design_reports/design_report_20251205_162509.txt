@@ -1,0 +1,518 @@
+
+================================================================================
+                       LCD DRIVER AMPLIFIER DESIGN REPORT                       
+================================================================================
+
+================================================================================
+                 SECTION 1: DESIGN SPECIFICATIONS & PARAMETERS                  
+================================================================================
+
+--- Running Preliminary Design Parameter Calculations ---
+============================================================
+     PRELIM DESIGN PARAMETER CALC (Miller + Nulling R)      
+============================================================
+
+--- Spec & Error Budget ---
+Total Error Spec:           0.200%
+  RC-only error @ T_PIXEL:  0.075%
+  Remaining error budget:   0.125%
+    -> Static budget:       0.038%
+    -> Dynamic (amp) budget:0.088%
+Planned total (RC+stat+dyn):0.200%
+
+T_PIXEL:                    180.00 ns
+Load τ:                     25.00 ns
+Load f_3dB:                 6.37 MHz
+
+--- Static Error → Loop Gain ---
+β (for G=2):                0.500
+Required loop gain βA0:     2658.40
+Required A0 (open-loop):    5316.81 V/V (74.5 dB)
+
+--- Dynamic Error → f_u ---
+Required τ_amp from dyn:    25.57 ns
+Required f_3dB,CL (amp):    6.22 MHz
+f_u from dyn requirement:   12.45 MHz
+f_u from load margin (CL):  25.46 MHz (CL margin=2x)
+--> Final required f_u:     25.46 MHz
+
+--- Stage 1 (Input) ---
+Cc:                         0.80 pF
+Required gm1:               128.00 µS
+
+--- Stage 2 (Output) ---
+C_OUT estimate:             0.73 pF
+Target p2:                  43.29 MHz (= 1.70 * f_u)
+
+
+--- Target Specifications ---
+Closed-Loop Gain: 2 V/V
+Output Swing Required: 1.4 V
+Load: 1000.0 Ohm || 25.0 pF
+Total Error Budget: 0.200%
+  - Static Error: 0.038%
+  - Dynamic Error: 0.088%
+Settling Time Required: 180.0 ns
+Phase Margin Target: 60 deg
+Maximum Power: 1.25 mW
+Supply Voltages: VDD_L=1.1V, VDD_H=1.8V
+
+--- Calculated Design Parameters ---
+Required Open-Loop Gain (A0): 5316.8 V/V (74.5 dB)
+Required Unity Gain Frequency (f_u): 25.46 MHz
+Required Closed-Loop 3dB Bandwidth: 6.22 MHz
+Miller Compensation Capacitor (CC): 0.80 pF
+Required Stage 1 Transconductance (gm1): 128.00 uS
+
+--- Nulling Resistor Options ---
+(Will be calculated from actual Stage 2 design parameters)
+
+================================================================================
+                       SECTION 2: AMPLIFIER STAGE DESIGNS                       
+================================================================================
+
+--------------------------------------------------------------------------------
+STAGE 2: CLASS AB OUTPUT STAGE
+--------------------------------------------------------------------------------
+======================================================================
+OUTPUT STAGE DESIGN (Class AB common-source)
+======================================================================
+RL      = 1000.0 Ω
+CL      = 25.00 pF
+ΔV_pix  = 1.40 V
+τ_RLCL  = 25.00 ns  (physical load time constant)
+
+VDDH candidates = [1.55, 1.6]
+
+Minimum peak current I_pk_min = 1.400 mA
+Target I_pk (with margin)      = 1.680 mA (α=1.2)
+Class-AB ratio k_AB           = 10.0 (I_pk ≈ k_AB * Iq)
+Min p2 target (stage 2)       = 43.29 MHz
+
+----------------------------------------------------------------------
+VDDH = 1.550 V
+  Vout_CM      = 0.775 V
+  Vout_min_req = 0.075 V
+  Vout_max_req = 1.475 V
+  (Requested endpoints at the amplifier output node.)
+
+----------------------------------------------------------------------
+VDDH = 1.600 V
+  Vout_CM      = 0.800 V
+  Vout_min_req = 0.100 V
+  Vout_max_req = 1.500 V
+  (Requested endpoints at the amplifier output node.)
+
+
+======================================================================
+CANDIDATE EVALUATION STATISTICS
+======================================================================
+Total candidates evaluated: 1440
+Valid designs found: 275
+
+Rejection breakdown:
+  bad_gm_id (gm_id <= 0):             0
+  bad_JD (JD <= 0):                   0
+  p2_pathological (C_eff <= 0):      0
+  slew_fail (I_pk < target):          0
+  gain_fail (A2 < A2_min):           0
+  p2_fail (p2 < p2_min):           402
+  swing_fail (swing mismatch):     415
+  vgate_n_fail (Vgate_n < VCM2):    348
+  lookup_exception (error):          0
+
+  Total rejected:                  1165
+  Acceptance rate:              19.10%
+======================================================================
+
+
+[OK] Exported 275 designs to 'output_stage_designs.csv'
+
+======================================================================
+BEST DESIGN (MINIMUM VDDH * Iq_total)
+======================================================================
+VDDH        = 1.550 V
+Vout_CM     = 0.775 V
+V_low_sat   = 0.068 V
+V_high_sat  = 1.477 V
+Swing_act   = 1.408 V (required ≥ 1.400 V)
+
+L_n         = 0.150 um
+gmId_n      = 14.64 V^-1
+Wn          = 38.98 um
+
+L_p         = 0.150 um
+gmId_p      = 13.64 V^-1
+Wp          = 26.66 um
+
+Iq (branch) = 252.00 uA
+Iq_scale    = 1.50
+A2          = 33.09 V/V
+gm_total    = 7124.73 uS
+rout        = 4.64 kΩ
+p2          = 226.97 MHz (target ≥ 43.29 MHz)
+I_pk_av     ≈ 2.52 mA (target ≥ 1.68 mA)
+C_out_p     = 0.03 pF
+
+VGS_n       = 0.572 V
+VGS_p       = 0.591 V
+Vgate_n     = 0.572 V  (required input common-mode)
+Vgate_p     = 0.959 V
+Vbias(p-n)  = 0.386 V  (PMOS gate = NMOS gate + Vbias)
+P_out,DC    ≈ 0.39 mW at VDDH=1.55 V
+======================================================================
+
+=== Cadence Values ===
+vocm:                   0.775
+M10_L:                  0.15u
+M10_W:                  38.98u
+M11_L:                  0.15u
+M11_W:                  26.66u
+VB_OUT:                 0.386
+
+[OK] Stage 2 Design Successful!
+  Total gm: 7124.73 uS
+  Output Resistance: 4.64 kOhm
+  Quiescent Current: 252.00 uA
+  Stage 2 Gain (A2): 33.09 V/V
+  Peak Drive Current: 2.52 mA
+  Required Input CM (Vgate_n): 0.572 V
+
+[WARNING] Output parasitic capacitance differs significantly from config estimate!
+  Calculated value: 0.03 pF
+  Config estimate:  0.10 pF
+  Ratio: 0.31x (calculated is 3.20x smaller than estimate)
+  Consider updating C_OUT_P in config.py if this is expected.
+
+--------------------------------------------------------------------------------
+STAGE 1: TELESCOPIC CASCODE DIFFERENTIAL AMPLIFIER
+--------------------------------------------------------------------------------
+  Stage 2 required input CM (Vgate_n): 0.572 V
+  Target Stage-1 Output CM (with correction): 0.528 V
+    (Correction factor: -0.044 V)
+
+=== TELESCOPIC DESIGN RESULTS ===
+Mode:                  high_swing
+Target Vout_CM:        0.528 V
+Vout_CM (opt):         0.528 V
+fu actual:             25.87 MHz  (from gm1/(2*pi*Cc))
+M1/M2 gm/ID (input):   15.00 V⁻¹
+M3/M4 gm/ID:           21.00 V⁻¹
+M5/M6 gm/ID:           10.00 V⁻¹
+M7/M8 gm/ID:           10.00 V⁻¹
+M9 gm/ID (tail):       20.00 V⁻¹
+Normalized Av metric:  171.59
+
+gm(M1):                130.06 uS
+Rout_down (NMOS side): 1.73 MΩ
+Rout_up   (PMOS side): 5.56 MΩ
+Rout_total (SE):       1.32 MΩ
+Stage-1 gain A1:       171.6 V/V  (44.7 dB)
+
+PMOS L:                2.00 um
+M7/M8:             W = 3.72 um,  VSD = 0.272 V, Vov≈0.200 V
+M5/M6:             W = 3.73 um, VSD = 0.270 V, Vov≈0.200 V
+M3/M4:             L = 0.05 um, W = 18.84 um,  VDS = 0.150 V, Vov≈0.095 V
+M1/M2 (2V):        L = 2.00 um, W = 13.14 um,  VDS = 0.228 V, Vov≈0.133 V
+M9 (Tail NMOS):    L = 1.00 um, W = 41.34 um, ID_tail = 17.34 uA, VDS≈0.150 V, Vov≈0.100 V
+
+Input CM Vcm_in:       0.645 V   (this is the CM at M1/M2 gates)
+VBN (NMOS bias):       0.801 V
+VBP0 (PMOS bottom):    0.282 V
+VBP1 (PMOS top):       0.528 V
+
+HEADROOM WARNINGS (gm/ID model, approx Vov):
+  - Tail device M9 near triode (VDS too small vs Vov).
+=================================
+
+=== Cadence Values ===
+IDC:                   17.34u
+M12_L:                 2.00u
+M12_W:                 13.14u
+M34_L:                 0.05u
+M34_W:                 18.84u
+M56_L:                 2.00u
+M56_W:                 3.73u
+M78_L:                 2.00u
+M78_W:                 3.72u
+M9_L:                  1.00u
+M9_W:                  41.34u
+VBN:                   0.801
+VBPO:                  0.282
+
+[OK] Stage 1 Design Successful!
+  Voltage Gain (A1): 171.6 V/V (44.7 dB)
+  Output Resistance: 1.32 MOhm
+  Branch Current: 8.67 uA
+  Tail Current: 17.34 uA
+  Common-Mode Voltage (inputs): 0.645 V
+  Output CM Voltage (Stage 1): 0.528 V
+
+================================================================================
+                         SECTION 3: STABILITY ANALYSIS                          
+================================================================================
+
+--- Transfer Function Parameters ---
+Stage 1 Gain (A1): 171.6 V/V (44.7 dB)
+Stage 2 Gain (A2): 33.09 V/V (30.4 dB)
+Total DC Gain (A0): 5677.9 V/V (75.1 dB)
+
+--- Static Error from Actual Gain ---
+Loop Gain: 2838.9 V/V (69.1 dB)
+Static Error: 0.0352% (from actual A0=5677.9 V/V)
+
+--- Output Capacitance Calculation (using p2 from Stage 2 design) ---
+p2 from Stage 2 design: 226.97 MHz
+
+C_OUT breakdown:
+  CL (load capacitance):            25.00 pF
+  CL_eff (frequency-reduced):       0.02 pF
+  C_out_parasitic (from design):   0.03 pF
+  C_FB (feedback cap):              0.10 pF
+  Total C_OUT:                     0.15 pF
+  Rout2:                           4.64 kΩ
+
+--- Nulling Resistor Values (from actual design) ---
+  Actual gm2:                      7124.73 uS
+  Rz (Zero at Infinity):           140.4 Ohm
+  Rz (Cancel p2):                  166.8 Ohm
+
+--- Pole/Zero Locations (Rz = 1/gm2 = 140.4 Ohm (zero at infinity)) ---
+Dominant Pole (p1): 781.90 kHz
+Non-Dominant Pole (p2): 226.97 MHz
+Unity Gain Frequency: 25.87 MHz
+Pole Separation (p2/f_u): 8.77x
+
+--- Stability Metrics ---
+Estimated Phase Margin: 83.5 deg
+  [OK] [PASS] Phase Margin meets target (60 deg)
+
+Note: Set GENERATE_STABILITY_PLOTS=True in config.py to generate Bode plots
+
+================================================================================
+                       SECTION 4: SETTLING TIME ANALYSIS                        
+================================================================================
+
+--- Output Stage Drive Capability ---
+Maximum Drive Current: 2.52 mA
+Output Resistance: 4644.5 Ohm
+
+--- Settling Time Simulation ---
+Test Step Size: 0.7 V
+Error Tolerance: 0.200%
+
+======================================================================
+                 SETTLING TIME ANALYSIS (TOTAL ERROR)                 
+======================================================================
+
+  Using actual fu:         25.874 MHz
+  Calculated f_3dB (CL):    12.937 MHz (fu_actual / G_CLOSED_LOOP)
+Circuit Parameters:
+  Commanded step (V_step): 0.700 V
+  Driver I_max:            2.52 mA
+  Amp Output R (R_out):    4644.5 Ohm (info)
+  Load Resistance (R_L):   1000.0 Ohm
+  Load Capacitance (C_L):  25.0 pF
+  TOTAL Error Spec:        ±0.200%
+  Static Error (A0):       0.035%
+  Amp f_3dB (closed-loop): 12.937 MHz
+
+Two-Stage Parameters:
+  Stage 1 tail current:    17.34 uA
+  Compensation cap (CC):   0.80 pF
+  Output stage gain A2:    33.09 V/V
+
+Analytical Estimates (RC + Current Source):
+  RL * CL time constant:   25.00 ns
+  Steady-state current:    0.70 mA
+
+  Regime: LINEAR (not output-current-limited)
+    Required I = 0.70 mA < I_max = 2.52 mA
+
+--- Stage 1 (CC) Slewing Check ---
+  Slew rate at CC:         21.68 V/us
+  Est. Stage 1 swing:      0.021 V
+  CC slewing time:         0.98 ns
+  Effective output slew rate: 717.28 V/us (SR_CC * A2)
+
+--- Numerical Settling (Total Error) ---
+  Time to enter & stay within ±TOTAL err: 177.07 ns
+  Output slewing: None (linear RL-CL)
+
+======================================================================
+
+
+[OK] Settling Time: 177.07 ns
+  (Set GENERATE_SETTLING_PLOTS=True in config.py to generate plot)
+
+--- Specification Check ---
+Required Settling Time: 180.0 ns
+Actual Settling Time: 177.07 ns
+  [OK] [PASS] Settling Time meets requirement (1.6% margin)
+
+================================================================================
+                 SECTION 5: POWER DISSIPATION & FIGURE OF MERIT                 
+================================================================================
+
+--- Power Breakdown ---
+Stage 1 Power: 0.019 mW
+Stage 2 Power: 0.391 mW
+
+--- Total Power Dissipation ---
+Total Power: 0.409 mW
+Power Budget: 1.25 mW
+  [OK] [PASS] Power within budget (67.3% margin)
+
+--- Figure of Merit ---
+PRIMARY FOM = 1/(Power x Settling_Time)
+  FOM = 1/(0.409 mW x 177.07 ns)
+  **FOM = 13.80 x 10^9 W^-1 s^-1**
+
+Additional Metrics:
+  GBW/Power: 63237.45 MHz/mW
+  Small-Signal FOM: 2529498.15 x 10^15 Hz/(W·F)
+
+================================================================================
+                  SECTION 6: SPECIFICATION COMPLIANCE SUMMARY                   
+================================================================================
+
+--- Requirements Checklist ---
+
+Specification             Status     Actual               Requirement         
+---------------------------------------------------------------------------
+DC Gain                   [PASS]     5677.9 V/V           >= 5316.8 V/V       
+Unity Gain Frequency      [PASS]     25.87 MHz            ~25.46 MHz          
+Phase Margin              [PASS]     83.5 deg             >= 60 deg           
+Settling Time             [PASS]     177.1 ns             <= 180.0 ns         
+Output Swing              [PASS]     1.41 V               >= 1.4 V            
+Power Consumption         [PASS]     0.409 mW             <= 1.25 mW          
+---------------------------------------------------------------------------
+Overall: 6/6 specifications met
+
+================================================================================
+                           SECTION 7: DESIGN SUMMARY                            
+================================================================================
+
+--- Architecture ---
+Two-Stage Miller-Compensated Amplifier
+  - Stage 1: Telescopic cascode differential amplifier (high_swing mode: high-swing PMOS load)
+  - Stage 2: Class AB common-source output stage
+  - Compensation: Miller capacitor (CC = 0.80 pF) with Rz = 1/gm2 = 140.4 Ohm (zero at infinity)
+
+--- Key Design Parameters ---
+Supply Voltages:
+  - VDD_L (Stage 1): 1.07 V (effective, from design)
+  - VDD_H (Stage 2): 1.55 V
+
+Compensation:
+  - Miller Capacitor (CC): 0.80 pF
+  - Recommended Rz: 140.4 - 166.8 Ohm
+
+--- Performance Summary ---
+DC Gain: 75.1 dB
+Unity Gain Frequency: 25.87 MHz
+Phase Margin: 83.5 deg
+Settling Time: 177.07 ns
+Total Power: 409.155 uW
+FOM: 13.80 x 10^9 W^-1 s^-1
+
+--- Next Steps ---
+1. Run full stability analysis: python analyze_stability.py
+2. Perform SPICE simulation to verify hand calculations
+3. Corner analysis (process, voltage, temperature)
+4. Layout design and parasitic extraction
+5. Verify CMRR, PSRR, and noise performance
+
+================================================================================
+                                 END OF REPORT                                  
+================================================================================
+
+Generated/Updated Files:
+  [OK] settling_plot.png (settling time transient)
+  - Run analyze_stability.py for Bode plots
+  - Run individual stage scripts for detailed analysis
+
+[OK] Design report complete!
+
+================================================================================
+                      SECTION 8: CURRENT MIRROR PARAMETERS                      
+================================================================================
+
+--- Current Mirror Sizing ---
+Current mirror ratio (M9:IB): 8.00
+Tail current (Stage 1 M9):    17.34 uA
+IB:                           2.17u
+MIRR_W:                       5.17u
+MIRR_L:                       1.00u
+
+--- Bias Generation (Shared PMOS Branch) ---
+Desired VBP0 (from Stage 1): 0.282 V
+Desired VBN  (from Stage 1): 0.801 V
+
+Note: VBN > VBP0, using VBN as high bias and VBP0 as low bias
+
+=== Two-Diode PMOS Bias Branch ===
+VDD:          1.100 V
+Vbias_high:   0.801 V
+Vbias_low:    0.282 V
+Branch Id:    0.271 uA
+Device sizing (for Cadence vars):
+LB_TOP:       0.050u
+WB_TOP:       12.732u
+LB_BOT:       0.050u
+WB_BOT:       0.500u
+VSG_TOP:      0.299 V
+VSG_BOT:      0.519 V
+
+Bias branch current:          0.271 uA
+IB (from current mirror):     2.168 uA
+Required branch / IB ratio:   0.12 x
+MIRR_B_W:                     0.65u
+
+================================================================================
+                           SECTION 9: CADENCE VALUES                            
+================================================================================
+
+=== Cadence Values ===
+vddh:                  1.550
+vddl:                  1.100
+vcm:                   0.645
+IDC:                   17.34u
+M12_L:                 2.00u
+M12_W:                 13.14u
+M34_L:                 0.05u
+M34_W:                 18.84u
+M56_L:                 2.00u
+M56_W:                 3.73u
+M78_L:                 2.00u
+M78_W:                 3.72u
+M9_L:                  1.00u
+M9_W:                  41.34u
+VBN:                   0.801
+vocm:                  0.775
+M10_L:                 0.15u
+M10_W:                 38.98u
+M11_L:                 0.15u
+M11_W:                 26.66u
+VB_OUT:                0.386
+RZ:                    140.4
+CC:                    0.80
+VBPO:                  0.282
+IB:                    2.17u
+MIRR_L:                1.00u
+MIRR_W:                5.17u
+LB_TOP:                0.05u
+WB_TOP:                12.73u
+LB_BOT:                0.05u
+WB_BOT:                0.50u
+MIRR_B_W:              0.65u
+
+
+
+                                 \   ^__^
+                                  \  (oo)\_______
+                                     (__)\       )\/\
+                                         ||----w |
+                                         ||     ||
+
+
